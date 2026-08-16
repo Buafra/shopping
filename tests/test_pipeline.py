@@ -418,13 +418,16 @@ def test_unknown_history_ids_are_404(client):
 
 # ------------------------------------------------------------------ proxy ---
 
+# Hosts here must not collide with PROXY_PLACEHOLDERS — "example.com" and
+# "user:pass" are exactly the strings an unfilled config contains, and are
+# deliberately rejected elsewhere.
 @pytest.mark.parametrize("raw,expected", [
-    ("http://gate.example.com:8080", {"server": "http://gate.example.com:8080"}),
-    ("http://user:pass@gate.example.com:7000",
-     {"server": "http://gate.example.com:7000", "username": "user", "password": "pass"}),
+    ("http://gate.myproxy.io:8080", {"server": "http://gate.myproxy.io:8080"}),
+    ("http://alice:s3cret@gate.myproxy.io:7000",
+     {"server": "http://gate.myproxy.io:7000", "username": "alice", "password": "s3cret"}),
     # Proxy passwords routinely contain @ or :, so they arrive percent-encoded.
-    ("http://user:pa%40ss@gate.example.com:7000",
-     {"server": "http://gate.example.com:7000", "username": "user", "password": "pa@ss"}),
+    ("http://alice:s3%40cret@gate.myproxy.io:7000",
+     {"server": "http://gate.myproxy.io:7000", "username": "alice", "password": "s3@cret"}),
     ("", None),
     ("not a url", None),
 ])
