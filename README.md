@@ -1,0 +1,165 @@
+# 🛒 Shopping Scout
+
+Type in a product. It searches the **UAE local market** and the **global
+market** at the same time, shows you every offer with its URL, price and
+reviews, works out what each one *actually* costs delivered to the UAE, and
+tells you which one to buy — and why.
+
+```
+$ python cli.py "sony wh-1000xm5"
+
+#  STORE               LANDED    RATING    ETA   SCORE  PRODUCT
+1  Amazon.ae            1,299  4.6★(2847)     2d    87.6  Sony WH-1000XM5 Wireless Noise Cancel…
+2  Noon UAE             1,249  4.5★(312)      2d    83.7  Sony WH-1000XM5 Wireless Noise Cancel…
+3  AliExpress           1,101  4.7★(2100)    20d    82.2  Sony WH-1000XM5 Wireless Headphones …
+4  eBay                 1,301  4.8★(1842)    12d    81.6  Sony WH-1000XM5 Wireless Noise Cancel…
+
+▶ RECOMMENDED  Sony WH-1000XM5 Wireless Noise Cancelling Headphones, Black
+  Amazon.ae — AED 1,299 landed
+  https://www.amazon.ae/dp/B09XS7JWHH
+  Confidence: high
+    • At AED 1,299 landed it costs AED 198 (18%) more than the outright cheapest
+      listing, but wins on reviews, delivery and seller reliability.
+    • Rated 4.6/5 across 2,847 reviews — enough volume for that score to mean something.
+    • Buying locally from Amazon.ae means no customs surprises, local warranty,
+      and delivery in about 2 days.
+```
+
+## Why "landed cost" and not just price
+
+The cheapest sticker price is usually the wrong answer. A USD 180 item from the
+US can land dearer than an AED 720 item bought in Dubai once you add shipping,
+5% customs duty and 5% VAT. Every offer is therefore converted to AED and
+charged the fees it would really attract, and **ranking happens on that landed
+number** — never on the sticker price.
+
+| | |
+|---|---|
+| Item price | converted to AED at live FX (USD is pegged at 3.6725) |
+| Shipping | read from the listing where the store states it, estimated otherwise |
+| Customs duty | 5% of goods value, global sellers only |
+| VAT | 5% of (goods + freight + duty), global sellers only |
+| De-minimis | consignments at or below **AED 300** clear free of both |
+
+## Stores covered
+
+**UAE (local):** Amazon.ae · Noon UAE · Sharaf DG · Carrefour UAE
+**Global:** Amazon.com · eBay · AliExpress · Newegg
+
+Adding another store is one module in `app/providers/` plus one line each in
+`app/config.py` and `app/providers/__init__.py`. Nothing else changes.
+
+## How the recommendation is decided
+
+Each offer scores 0–100 on five weighted components (`app/scoring.py`):
+
+| Component | Weight | What it captures |
+|---|---:|---|
+| Price | 45% | landed cost relative to the best available |
+| Rating | 22% | star rating, Bayesian-shrunk toward the mean |
+| Review volume | 13% | log-scaled confidence in that rating |
+| Delivery | 12% | days to your door |
+| Seller trust | 8% | returns, warranty, dispute history |
+
+Two deliberate judgement calls:
+
+- **A 5.0 from two reviewers loses to a 4.6 from eight thousand.** Ratings are
+  shrunk toward a prior, so thin evidence cannot win on a fluke.
+- **The cheapest listing is not automatically the pick.** When the winner is not
+  the cheapest, the app says so explicitly and quantifies the premium, so you
+  can overrule it.
+
+Weights are environment variables — set `W_PRICE=0.6` if you care about price
+more than the defaults assume.
+
+## Running it
+
+```bash
+pip install -r requirements.txt
+playwright install chromium      # skip if Chromium is already provisioned
+
+# web UI at http://127.0.0.1:8000
+uvicorn app.main:app --reload
+
+# or from the terminal
+python cli.py "airfryer" --market local
+python cli.py "rtx 4070" --json
+```
+
+### API
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/search?q=…` | full comparison; `market=all\|local\|global`, `stores=ebay,noon` |
+| `GET /api/stores` | store registry and current scoring weights |
+| `GET /api/health` | FX source and whether the browser fallback is working |
+
+### Configuration
+
+All optional, all environment variables:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `REQUEST_TIMEOUT` | `20` | per-request timeout, seconds |
+| `MAX_RETRIES` | `2` | retries on timeout/5xx/429 |
+| `PER_STORE_RESULTS` | `6` | listings kept per store |
+| `USE_BROWSER_FALLBACK` | `true` | allow Playwright when plain HTTP is blocked |
+| `CHROMIUM_PATH` | auto | explicit Chromium binary |
+| `SCRAPER_PROXY` | – | outbound proxy, e.g. `http://user:pass@host:port` |
+| `UAE_VAT_RATE` / `UAE_CUSTOMS_RATE` | `0.05` | landed-cost assumptions |
+| `UAE_DUTY_FREE_THRESHOLD_AED` | `300` | de-minimis |
+| `W_PRICE`, `W_RATING`, `W_REVIEWS`, `W_DELIVERY`, `W_TRUST` | see above | must sum to 1.0 |
+
+## What can go wrong (read this)
+
+**Scraping is inherently fragile, and this app is honest about it rather than
+pretending otherwise.**
+
+- **Stores change their markup.** When a store redesigns, its parser returns
+  zero results. Every parser is written to degrade to "no offers" rather than
+  return wrong data, and each store's outcome — including the error — is shown
+  in the response and in the UI's *Store coverage* panel. A comparison built
+  from 5 of 8 stores says so.
+- **Stores block bots.** Amazon in particular blocks datacentre IPs hard. Each
+  provider tries plain HTTP first and falls back to a real headless browser.
+  From a residential IP most stores answer; from a cloud VM expect Amazon and
+  AliExpress to fail often. Set `SCRAPER_PROXY` if you need to route around it.
+- **Prices go stale immediately.** Always confirm on the store page before
+  buying. Every row links straight to the listing.
+- **Shipping is sometimes an estimate.** Rows show `~` where the figure is
+  assumed rather than quoted, and the assumption comes from `app/config.py`.
+- **Respect the stores.** Search endpoints only, one query per user action, no
+  bulk crawling. Several of these sites prohibit automated access in their
+  terms — that is a real constraint, and running this at volume is your call to
+  make, not the code's.
+
+## Tests
+
+```bash
+python -m pytest -q      # 118 tests
+```
+
+The suite never touches the network. Provider parsers run against fixtures in
+`tests/fixtures/` that mirror each store's real markup — including the cases
+that actually bite: sponsored Amazon cards, eBay's "Shop on eBay" placeholder,
+free-shipping wording, out-of-stock flags, duplicate listings, EU-style decimal
+commas, and pages that have been redesigned into unparseable junk.
+
+## Layout
+
+```
+app/
+  models.py      Offer, StoreStatus, Recommendation
+  config.py      settings, store registry, scoring weights
+  net.py         HTTP client, retries, price/rating parsing
+  browser.py     Playwright fallback + Chromium discovery
+  fx.py          currency conversion, live with static fallback
+  pricing.py     landed cost — shipping, duty, VAT
+  matching.py    relevance filtering (drops accessories)
+  scoring.py     ranking and the written rationale
+  aggregator.py  concurrent fan-out across stores
+  main.py        FastAPI app
+  providers/     one module per store
+  static/        web UI
+cli.py           terminal interface
+```

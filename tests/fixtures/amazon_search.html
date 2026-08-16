@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html><body>
+<div class="s-main-slot">
+
+  <!-- Sponsored placement: must be skipped, it is an ad not a price signal -->
+  <div data-component-type="s-search-result" data-asin="B0SPONSORED">
+    <span class="puis-sponsored-label-text">Sponsored</span>
+    <h2 class="a-size-mini">
+      <a class="a-link-normal s-no-outline" href="/sponsored/dp/B0SPONSORED">
+        <span>Sony WH-1000XM5 Sponsored Listing</span></a>
+    </h2>
+    <span class="a-price"><span class="a-offscreen">AED 999.00</span></span>
+  </div>
+
+  <div data-component-type="s-search-result" data-asin="B09XS7JWHH">
+    <h2 class="a-size-mini">
+      <a class="a-link-normal s-no-outline" href="/Sony-WH-1000XM5-Cancelling-Headphones/dp/B09XS7JWHH/ref=sr_1_1">
+        <span>Sony WH-1000XM5 Wireless Noise Cancelling Headphones, Black</span></a>
+    </h2>
+    <div class="a-section">
+      <span class="a-price" data-a-color="base">
+        <span class="a-offscreen">AED 1,299.00</span>
+        <span aria-hidden="true"><span class="a-price-symbol">AED</span>1,299<span class="a-price-fraction">00</span></span>
+      </span>
+    </div>
+    <div class="a-row a-size-small">
+      <span aria-label="4.6 out of 5 stars">
+        <i class="a-icon a-icon-star-small a-star-small-4-5"><span class="a-icon-alt">4.6 out of 5 stars</span></i>
+      </span>
+      <span class="a-size-base s-underline-text">2,847</span>
+    </div>
+    <img class="s-image" src="https://m.media-amazon.com/images/I/61vJtKbAssL._AC_UY218_.jpg" alt="">
+  </div>
+
+  <div data-component-type="s-search-result" data-asin="B0BXYZ1234">
+    <h2 class="a-size-mini">
+      <a class="a-link-normal s-no-outline" href="/Sony-WH-1000XM5-Silver/dp/B0BXYZ1234">
+        <span>Sony WH-1000XM5 Wireless Headphones, Silver</span></a>
+    </h2>
+    <span class="a-price"><span class="a-offscreen">AED 1,189.50</span></span>
+    <i class="a-icon a-icon-star-small"><span class="a-icon-alt">4.4 out of 5 stars</span></i>
+    <span class="a-size-base s-underline-text">1,203</span>
+    <img class="s-image" src="https://m.media-amazon.com/images/I/silver.jpg" alt="">
+  </div>
+
+  <!-- Malformed card: no price. Must be dropped, not crash the parse. -->
+  <div data-component-type="s-search-result" data-asin="B0NOPRICE0">
+    <h2><a class="a-link-normal" href="/broken/dp/B0NOPRICE0"><span>Sony WH-1000XM5 Unavailable</span></a></h2>
+    <span class="a-color-price">Currently unavailable</span>
+  </div>
+
+</div>
+</body></html>

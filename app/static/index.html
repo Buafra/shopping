@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shopping Scout — UAE &amp; global price comparison</title>
+<link rel="stylesheet" href="/static/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛒</text></svg>">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap">
+    <h1>🛒 Shopping Scout</h1>
+    <p class="tagline">Search a product once. See what it really costs across UAE and global stores — landed, after shipping and duty.</p>
+  </div>
+</header>
+
+<main class="wrap">
+  <form id="search-form" class="search">
+    <input id="query" type="search" name="q" placeholder="e.g. Sony WH-1000XM5 headphones" autocomplete="off" required minlength="2">
+    <select id="market" name="market" aria-label="Market">
+      <option value="all">Local + Global</option>
+      <option value="local">UAE only</option>
+      <option value="global">Global only</option>
+    </select>
+    <button type="submit" id="go">Compare</button>
+  </form>
+
+  <p class="hint">Live scrape across Amazon.ae, Noon, Sharaf DG, Carrefour, Amazon.com, eBay, AliExpress and Newegg. Takes 15–45 seconds.</p>
+
+  <section id="status" class="status" hidden></section>
+  <section id="recommendation" class="recommendation" hidden></section>
+  <section id="results" hidden>
+    <div class="results-head">
+      <h2>All offers <span id="result-count" class="muted"></span></h2>
+      <label class="sort-label">Sort
+        <select id="sort">
+          <option value="score">Best overall</option>
+          <option value="landed">Landed price</option>
+          <option value="rating">Rating</option>
+          <option value="delivery">Delivery speed</option>
+        </select>
+      </label>
+    </div>
+    <div class="table-scroll">
+      <table id="offers-table">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Store</th>
+            <th class="num">Item</th>
+            <th class="num">Ship</th>
+            <th class="num">Duty/VAT</th>
+            <th class="num">Landed (AED)</th>
+            <th class="num">Rating</th>
+            <th class="num">ETA</th>
+            <th class="num">Score</th>
+          </tr>
+        </thead>
+        <tbody id="offers-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="store-log" class="store-log" hidden>
+    <h2>Store coverage</h2>
+    <div id="store-log-body" class="store-grid"></div>
+  </section>
+</main>
+
+<footer class="wrap footer">
+  <p>Prices are scraped live and can change or fail without notice. Landed cost assumes UAE import duty 5% and VAT 5% above the AED 300 de-minimis. Always confirm on the store page before buying.</p>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

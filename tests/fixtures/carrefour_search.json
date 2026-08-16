@@ -1,0 +1,14 @@
+{"products":[
+  {"id":"1000123456","name":"Sony WH-1000XM5 Wireless Headphones Black",
+   "price":{"price":1279.00,"currency":"AED"},
+   "links":{"productUrl":{"href":"/mafuae/en/p/1000123456"}},
+   "images":{"thumbnails":["https://cdn.mafrservices.com/sys-master/x/thumb.jpg"]},
+   "rating":{"value":4.4,"count":57},
+   "stock":{"stockLevelStatus":"inStock"}},
+  {"id":"1000998877","name":"Sony WH-1000XM5 Headphones Midnight Blue",
+   "price":{"price":1349.00,"currency":"AED"},
+   "links":{"productUrl":{"href":"/mafuae/en/p/1000998877"}},
+   "images":{"thumbnails":[]},
+   "rating":{"value":4.2,"count":12},
+   "stock":{"stockLevelStatus":"outOfStock"}}
+]}
