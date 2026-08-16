@@ -30,7 +30,7 @@ def load(name: str) -> str:
 
 def test_amazon_parses_listings():
     offers = amazon_ae()._parse(load("amazon_search.html"), limit=10)
-    assert len(offers) == 2
+    assert len(offers) == 3
 
     black = next(o for o in offers if "Black" in o.title)
     assert black.price == 1299.00
@@ -39,6 +39,33 @@ def test_amazon_parses_listings():
     assert black.review_count == 2847
     assert black.url == "https://www.amazon.ae/dp/B09XS7JWHH"
     assert black.image.startswith("https://m.media-amazon.com")
+
+
+def test_amazon_reads_the_title_not_the_brand_row():
+    """Amazon puts a brand-only <h2>Sony</h2> above the real title. Taking the
+    first h2 gave every listing the title "Sony", which matches no query — so
+    Amazon fetched results and contributed nothing to any comparison."""
+    from app.matching import relevance
+
+    offers = amazon_ae()._parse(load("amazon_search.html"), limit=10)
+    brand_row = next(o for o in offers if o.url.endswith("B09ZFD9CBB"))
+
+    assert brand_row.title.startswith("Sony WH-1000XM5 Wireless Industry Leading")
+    assert relevance("sony wh-1000xm5", brand_row.title) == 1.0
+    assert all(o.title != "Sony" for o in offers), "no listing may be titled by brand alone"
+
+
+def test_amazon_titles_survive_the_relevance_filter():
+    """The end-to-end symptom: every Amazon offer filtered out as a mismatch."""
+    from app.matching import filter_relevant
+    from app.pricing import normalise_offer
+
+    offers = amazon_ae()._parse(load("amazon_search.html"), limit=10)
+    for offer in offers:
+        normalise_offer(offer, {"AED": 1.0})
+
+    result = filter_relevant(offers, "sony wh-1000xm5")
+    assert result.offers, "Amazon must contribute something to the comparison"
 
 
 def test_amazon_skips_sponsored_and_priceless_cards():

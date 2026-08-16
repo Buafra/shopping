@@ -16,7 +16,20 @@ from .base import Provider
 
 RESULT_SELECTOR = 'div[data-component-type="s-search-result"]'
 
-TITLE_SELECTORS = ["h2 a span", "h2 span", "[data-cy='title-recipe'] span", "h2"]
+# Amazon's search layout puts a brand-only row above the product title:
+#   <div data-cy="title-recipe">
+#     <h2><span>Sony</span></h2>                     <- brand
+#     <a ...><h2><span>Sony WH-1000XM5 ...</span></h2></a>   <- real title
+# Taking the first match yields "Sony", which then matches no query at all.
+# Every candidate is collected and the longest plausible one wins.
+TITLE_SELECTORS = [
+    "h2 a span",
+    "a.a-link-normal h2 span",
+    "[data-cy='title-recipe'] h2 span",
+    "[data-cy='title-recipe'] a span",
+    "h2 span",
+    "h2",
+]
 LINK_SELECTORS = ["h2 a", "a.a-link-normal.s-no-outline", "a.a-link-normal"]
 PRICE_SELECTORS = [
     "span.a-price > span.a-offscreen",
@@ -39,6 +52,32 @@ def _first_text(node, selectors: list[str]) -> str:
             if text:
                 return text
     return ""
+
+
+def _best_title(card) -> str:
+    """The longest plausible title on the card.
+
+    A brand row ("Sony") and the product title live in sibling h2 elements, so
+    "first match wins" picks the brand. Length is the reliable discriminator:
+    a product title is a sentence, a brand is a word. The image alt text is
+    included as a candidate because Amazon fills it with the full title.
+    """
+    candidates: list[str] = []
+    for selector in TITLE_SELECTORS:
+        for node in card.css(selector):
+            text = clean_text(node.text())
+            if text:
+                candidates.append(text)
+
+    image = card.css_first("img.s-image, img[alt]")
+    if image:
+        alt = clean_text(image.attributes.get("alt") or "")
+        if alt:
+            candidates.append(alt)
+
+    if not candidates:
+        return ""
+    return max(candidates, key=len)
 
 
 def _first_attr(node, selectors: list[str], attr: str) -> str | None:
@@ -82,7 +121,7 @@ class AmazonProvider(Provider):
             ):
                 continue
 
-            title = _first_text(card, TITLE_SELECTORS)
+            title = _best_title(card)
             price = parse_price(_first_text(card, PRICE_SELECTORS))
             href = _first_attr(card, LINK_SELECTORS, "href")
             if not title or price is None or not href:

@@ -207,7 +207,7 @@ fix on its own:
 
 | Store | Result |
 |---|---|
-| **Amazon.ae** | works — 6 offers over plain HTTP in ~1s |
+| **Amazon.ae** | works — offers with ratings and review counts, over plain HTTP in ~1s |
 | Noon UAE | connection refused at protocol level (`ERR_HTTP2_PROTOCOL_ERROR`); HTTP/1.1 fallback added, unverified |
 | Sharaf DG | serves a **CAPTCHA** to headless browsers; page loads with zero prices in it |
 | **Carrefour UAE** | works — 6 offers in ~2.5s by parsing the search page (its JSON API is retired) |
@@ -250,7 +250,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 194 tests
+python -m pytest -q      # 196 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in
