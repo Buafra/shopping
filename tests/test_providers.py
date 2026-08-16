@@ -262,3 +262,55 @@ def test_registry_builds_every_configured_store():
     assert {p.spec.key for p in build_all()} == set(STORES)
     for key in STORES:
         assert build(key).spec.key == key
+
+
+def test_carrefour_tries_each_endpoint_before_giving_up(monkeypatch):
+    """A retired Carrefour API version answers 403, not 404, so one hard-coded
+    endpoint takes the whole store down. Every candidate must be attempted."""
+    import asyncio
+
+    from app.net import FetchError
+    from app.providers import carrefour_ae as module
+
+    tried: list[str] = []
+
+    async def fake_fetch(url, **kwargs):
+        tried.append(url)
+        raise FetchError(f"HTTP 403 from {url}", kind="blocked")
+
+    monkeypatch.setattr(module, "fetch", fake_fetch)
+
+    with pytest.raises(FetchError):
+        asyncio.run(module.make().search_http("headphones", 5))
+
+    assert len(tried) == len(module.API_CANDIDATES)
+    assert tried[0] == module.API
+
+
+def test_carrefour_stops_at_the_first_endpoint_that_answers(monkeypatch):
+    import asyncio
+
+    from app.net import FetchError
+    from app.providers import carrefour_ae as module
+
+    payload = {"products": [{
+        "id": "1", "name": "Sony WH-1000XM5", "price": {"price": 1279.0},
+        "links": {"productUrl": {"href": "/mafuae/en/p/1"}},
+    }]}
+
+    calls: list[str] = []
+
+    class FakeResponse:
+        def json(self): return payload
+
+    async def fake_fetch(url, **kwargs):
+        calls.append(url)
+        if len(calls) == 1:
+            raise FetchError("HTTP 403", kind="blocked")
+        return FakeResponse()
+
+    monkeypatch.setattr(module, "fetch", fake_fetch)
+
+    offers = asyncio.run(module.make().search_http("sony", 5))
+    assert len(offers) == 1
+    assert len(calls) == 2, "must stop once an endpoint answers"

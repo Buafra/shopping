@@ -17,7 +17,16 @@ from ..net import clean_text, fetch, parse_int, parse_price, parse_rating
 from .base import Provider
 
 ORIGIN = "https://www.carrefouruae.com"
-API = f"{ORIGIN}/api/v8/search"
+
+# Carrefour versions this endpoint and retires old ones without notice, and a
+# retired version answers 403 rather than 404. Try each in turn instead of
+# betting the whole store on one guess.
+API_CANDIDATES = [
+    f"{ORIGIN}/api/v8/search",
+    f"{ORIGIN}/api/v7/search",
+    f"{ORIGIN}/api/v1/menu/search",
+]
+API = API_CANDIDATES[0]  # kept for callers/tests that patch a single endpoint
 
 # Carrefour segments its catalogue by fulfilment area; this is the default
 # Dubai "market place" store used by the public site.
@@ -32,8 +41,22 @@ class CarrefourProvider(Provider):
         return f"{ORIGIN}/mafuae/en/v4/search?keyword={self.q(query)}"
 
     async def search_http(self, query: str, limit: int) -> list[Offer]:
+        # `API` is honoured first so a patched or pinned endpoint still wins.
+        endpoints = [API] + [u for u in API_CANDIDATES if u != API]
+        last_error: Exception | None = None
+
+        for endpoint in endpoints:
+            try:
+                return await self._search_endpoint(endpoint, query, limit)
+            except Exception as exc:
+                last_error = exc
+                continue
+
+        raise last_error if last_error else RuntimeError("no Carrefour endpoint tried")
+
+    async def _search_endpoint(self, endpoint: str, query: str, limit: int) -> list[Offer]:
         resp = await fetch(
-            API,
+            endpoint,
             params={
                 "keyword": query,
                 "currentPage": 0,

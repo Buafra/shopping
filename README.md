@@ -128,6 +128,8 @@ All optional, all environment variables:
 | Variable | Default | Purpose |
 |---|---|---|
 | `REQUEST_TIMEOUT` | `20` | per-request timeout, seconds |
+| `HTTP_PHASE_TIMEOUT` | `25` | cap on the whole HTTP phase, retries included |
+| `BROWSER_PHASE_TIMEOUT` | `45` | cap on the browser fallback |
 | `MAX_RETRIES` | `2` | retries on timeout/5xx/429 |
 | `PER_STORE_RESULTS` | `6` | listings kept per store |
 | `USE_BROWSER_FALLBACK` | `true` | allow Playwright when plain HTTP is blocked |
@@ -173,10 +175,27 @@ pretending otherwise.**
   terms — that is a real constraint, and running this at volume is your call to
   make, not the code's.
 
+## When a store breaks
+
+Stores redesign, and a `parse` failure means that store's selectors are stale.
+`diagnose.py` captures what the store really returns so the fix is based on
+evidence:
+
+```bash
+python diagnose.py sharaf_dg              # one store
+python diagnose.py --all --query "airfryer"
+```
+
+It runs the HTTP and browser paths separately and reports the page title, any
+bot-wall markers, whether the page ships `__NEXT_DATA__` or JSON-LD, how many
+elements each current selector still matches, how many offers parse out, and
+which repeated CSS classes look like product cards. Raw HTML is written to
+`captures/` (git-ignored) so nothing leaves your machine.
+
 ## Tests
 
 ```bash
-python -m pytest -q      # 137 tests
+python -m pytest -q      # 143 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in
@@ -203,4 +222,5 @@ app/
   static/        web UI
 cli.py           terminal interface
 run.py           web launcher with automatic port selection
+diagnose.py      capture a store's real markup when its parser breaks
 ```

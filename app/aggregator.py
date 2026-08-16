@@ -19,8 +19,12 @@ from .providers import Provider, build_all
 
 log = logging.getLogger(__name__)
 
-# Per-store ceiling: HTTP attempt + browser fallback both have to fit.
-STORE_DEADLINE = 45.0
+# Per-store ceiling. Derived from the phase budgets rather than hard-coded, so
+# it can never be shorter than the work it is meant to contain — a mismatch
+# silently kills the browser fallback for exactly the slow stores that need it.
+STORE_DEADLINE = (
+    SETTINGS.http_phase_timeout + SETTINGS.browser_phase_timeout + 10.0
+)
 
 
 async def _run_provider(

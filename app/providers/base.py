@@ -12,6 +12,7 @@ HTTP returns nothing or is blocked.
 from __future__ import annotations
 
 import abc
+import asyncio
 import logging
 import time
 from urllib.parse import quote_plus
@@ -82,8 +83,16 @@ class Provider(abc.ABC):
         offers: list[Offer] = []
 
         try:
-            offers = await self.search_http(query, limit)
+            offers = await asyncio.wait_for(
+                self.search_http(query, limit), SETTINGS.http_phase_timeout
+            )
             fetch_succeeded = True
+        except asyncio.TimeoutError:
+            error, error_kind = (
+                f"no HTTP response within {SETTINGS.http_phase_timeout:.0f}s",
+                "timeout",
+            )
+            log.info("%s http path timed out", self.spec.key)
         except FetchError as exc:
             error, error_kind = str(exc), exc.kind
             log.info("%s http path failed: %s", self.spec.key, error)
@@ -93,11 +102,21 @@ class Provider(abc.ABC):
 
         if not offers and SETTINGS.use_browser_fallback:
             try:
-                offers = await self.search_browser(query, limit)
+                offers = await asyncio.wait_for(
+                    self.search_browser(query, limit), SETTINGS.browser_phase_timeout
+                )
                 method = "browser"
                 fetch_succeeded = True
                 if offers:
                     error, error_kind = None, None
+            except asyncio.TimeoutError:
+                browser_error = (
+                    f"browser did not finish loading within "
+                    f"{SETTINGS.browser_phase_timeout:.0f}s"
+                )
+                error = error or browser_error
+                error_kind = error_kind or "timeout"
+                log.info("%s browser path timed out", self.spec.key)
             except BrowserUnavailable as exc:
                 log.debug("%s browser path unavailable: %s", self.spec.key, exc)
             except Exception as exc:

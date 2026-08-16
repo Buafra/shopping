@@ -38,6 +38,13 @@ class Settings:
     request_timeout: float = _env_float("REQUEST_TIMEOUT", 20.0)
     browser_timeout: float = _env_float("BROWSER_TIMEOUT", 35.0)
     max_retries: int = _env_int("MAX_RETRIES", 2)
+
+    # Each store gets two chances — plain HTTP, then a real browser — and each
+    # phase is capped separately. Without this the retry loop can eat the whole
+    # per-store deadline, so a slow store is abandoned before the browser
+    # fallback (often the only path that works for JS-heavy sites) ever runs.
+    http_phase_timeout: float = _env_float("HTTP_PHASE_TIMEOUT", 25.0)
+    browser_phase_timeout: float = _env_float("BROWSER_PHASE_TIMEOUT", 45.0)
     max_concurrent_stores: int = _env_int("MAX_CONCURRENT_STORES", 8)
     per_store_results: int = _env_int("PER_STORE_RESULTS", 6)
 
