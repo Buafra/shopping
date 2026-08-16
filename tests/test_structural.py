@@ -181,3 +181,48 @@ def test_adjacent_elements_do_not_fuse():
 
     node = HTMLParser("<div><span>off</span><span>AED 999.00</span></div>").css_first("div")
     assert node_text(node) == "off AED 999.00"
+
+
+# ---- currency is read from the page, never assumed -----------------------
+
+def test_currency_is_read_from_the_price_text():
+    """AliExpress localises by IP: a UAE visitor is quoted AED on a store the
+    registry calls USD. Assuming USD multiplied every price by 3.67 and made
+    genuine bargains look absurdly expensive."""
+    html = """<div><a href="/item/1005006.html">
+      <h3>بطاقة رسومات RTX 4070 SUPER WindForce</h3></a>
+      <span>AED 2,964.00</span></div>"""
+    cards = parse_cards(html, origin="https://www.aliexpress.com", link_match="/item/")
+
+    assert cards[0].price == 2964.00
+    assert cards[0].currency == "AED", "must not be reported as USD"
+
+
+def test_usd_prices_are_still_detected():
+    html = """<div><a href="/item/1005006.html"><h3>RTX 4070 Graphics Card</h3></a>
+      <span>US $806.50</span></div>"""
+    cards = parse_cards(html, origin="https://www.aliexpress.com", link_match="/item/")
+    assert cards[0].currency == "USD"
+
+
+def test_unmarked_price_leaves_currency_unset():
+    """With no marker the caller falls back to the store default rather than
+    guessing — an unmarked number is not evidence of any currency."""
+    html = """<div><a href="/mafuae/en/x/p/1">
+      <span data-testid="product_name">Sony WH-1000XM5 Headphones</span></a>
+      <span data-testid="product_price">1,299.00</span></div>"""
+    cards = parse_cards(html, origin=ORIGIN, link_match="/p/")
+    assert cards[0].price == 1299.00
+    assert cards[0].currency is None
+
+
+def test_provider_uses_the_detected_currency():
+    from app.providers.aliexpress import make
+
+    html = """<html><body><div><a href="/item/1005006.html">
+      <h3>RTX 4070 SUPER Graphics Card WindForce</h3></a>
+      <span>AED 2,964.00</span></div></body></html>"""
+    offers = make()._parse(html, 5)
+
+    assert offers[0].currency == "AED", "store default USD must not override the page"
+    assert offers[0].price == 2964.00

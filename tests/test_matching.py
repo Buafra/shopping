@@ -200,3 +200,42 @@ def test_all_refurbished_still_returns_something():
     ]
     result = filter_relevant(offers, "sony wh-1000xm5")
     assert len(result.offers) == 2
+
+
+# ---- variant suffixes are identity too -----------------------------------
+
+@pytest.mark.parametrize("title", [
+    "ASUS TUF Gaming NVIDIA GeForce RTX 4070 Ti OC Edition",
+    "GIGABYTE GeForce RTX 4070 SUPER WINDFORCE OC 12G",
+    "ZOTAC Gaming GeForce RTX 4070 Super Twin Edge",
+])
+def test_a_variant_card_does_not_answer_a_base_model_query(title):
+    """A live search for "rtx 4070" recommended an RTX 4070 Ti — a different,
+    pricier card — while the actual 4070 sat cheaper one row below."""
+    assert relevance("rtx 4070", title) == 0.0
+
+
+@pytest.mark.parametrize("title", [
+    "Gigabyte GeForce RTX 4070 Gaming OC 12G Graphics Card",
+    "MSI GeForce RTX 4070 VENTUS 3X E 12G OC",
+])
+def test_the_base_model_still_matches(title):
+    """"OC" is a factory overclock of the same chip, not a different product."""
+    assert relevance("rtx 4070", title) == 1.0
+
+
+def test_asking_for_a_variant_excludes_the_base_model():
+    assert relevance("rtx 4070 ti", "Gigabyte GeForce RTX 4070 Gaming OC") == 0.0
+    assert relevance("rtx 4070 ti", "ASUS TUF RTX 4070 Ti OC Edition") == 1.0
+
+
+def test_asking_for_a_variant_excludes_a_different_variant():
+    assert relevance("rtx 4070 ti", "GIGABYTE RTX 4070 SUPER WINDFORCE") == 0.0
+
+
+def test_variant_rule_does_not_fire_without_a_model_number():
+    """Ordinary queries must not be caught by the variant rule."""
+    from app.matching import variant_mismatch
+
+    assert not variant_mismatch("air fryer", "Philips Air Fryer XL Pro")
+    assert relevance("air fryer", "Philips Digital Air Fryer 4.1L") > 0.5

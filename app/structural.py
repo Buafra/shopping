@@ -28,6 +28,31 @@ PRICE_TEXT = re.compile(
     r"(?:AED|USD|SAR|Dhs\.?|د\.إ|\$)\s?\d[\d,.\s]*|\d[\d,.\s]*\s?(?:AED|SAR|د\.إ)",
     re.I,
 )
+# A store that localises by IP quotes local currency on the same markup. The
+# currency has to be read from the page, never assumed from the store's
+# nationality: AliExpress served a UAE visitor AED prices, and treating those
+# as USD multiplied every listing by 3.67 and pushed real bargains out of
+# contention as if they were absurdly expensive.
+CURRENCY_MARKERS: list[tuple[str, str]] = [
+    ("aed", "AED"), ("د.إ", "AED"), ("dhs", "AED"), ("dh", "AED"),
+    ("sar", "SAR"), ("ر.س", "SAR"),
+    ("usd", "USD"), ("us $", "USD"), ("$", "USD"),
+    ("eur", "EUR"), ("€", "EUR"),
+    ("gbp", "GBP"), ("£", "GBP"),
+    ("inr", "INR"), ("₹", "INR"),
+    ("cny", "CNY"), ("¥", "CNY"),
+]
+
+
+def detect_currency(text: str) -> str | None:
+    """Read the currency out of a price string, or None if it is unmarked."""
+    lowered = (text or "").lower()
+    for marker, code in CURRENCY_MARKERS:
+        if marker in lowered:
+            return code
+    return None
+
+
 RATING_TEXT = re.compile(r"\b([0-5](?:[.,]\d)?)\s*(?:/\s*5|out of 5|\()", re.I)
 
 # A number is not the selling price when it is introduced as a discount or an
@@ -61,6 +86,9 @@ class Card:
     title: str
     url: str
     price: float
+    # None when the page did not mark the currency; the caller then falls back
+    # to the store's default rather than guessing.
+    currency: str | None = None
     image: str | None = None
     rating: float | None = None
     review_count: int | None = None
@@ -117,7 +145,22 @@ def _title_from(container, link) -> str:
     return ""
 
 
-def _price_from(container) -> float | None:
+PRICE_HOOKS = ("[data-testid*='price']", "[data-qa*='price']", "[itemprop='price']")
+
+
+def _price_hook_value(container) -> tuple[float | None, str | None]:
+    """A price read from an explicit hook, which may carry no currency mark."""
+    for selector in PRICE_HOOKS:
+        node = container.css_first(selector)
+        if node:
+            raw = node_text(node)
+            value = parse_price(raw)
+            if value:
+                return value, detect_currency(raw)
+    return None, None
+
+
+def _price_from(container) -> tuple[float | None, str | None]:
     """What the shopper actually pays for this item.
 
     Cards are littered with numbers that are not the price: a struck-through
@@ -130,15 +173,12 @@ def _price_from(container) -> float | None:
     or an instalment are discarded first; of what remains, the lowest is the
     current price (the other survivor is usually the struck-through original).
     """
-    for selector in ("[data-testid*='price']", "[data-qa*='price']", "[itemprop='price']"):
-        node = container.css_first(selector)
-        if node:
-            value = parse_price(node_text(node))
-            if value:
-                return value
+    hooked, hooked_currency = _price_hook_value(container)
+    if hooked:
+        return hooked, hooked_currency or detect_currency(node_text(container))
 
     text = node_text(container)
-    values: list[float] = []
+    candidates: list[tuple[float, str | None]] = []
     for match in PRICE_TEXT.finditer(text):
         before = text[max(0, match.start() - 26):match.start()]
         after = text[match.end():match.end() + 20]
@@ -146,9 +186,11 @@ def _price_from(container) -> float | None:
             continue
         value = parse_price(match.group(0))
         if value and value > 0:
-            values.append(value)
+            candidates.append((value, detect_currency(match.group(0))))
 
-    return min(values) if values else None
+    if not candidates:
+        return None, None
+    return min(candidates, key=lambda pair: pair[0])
 
 
 def _image_from(container) -> str | None:
@@ -214,7 +256,10 @@ def parse_cards(
             text = node_text(ancestor)
             if len(text) > max_card_chars:
                 break
-            if not PRICE_TEXT.search(text):
+            # A price needs either a currency marker in the text or an explicit
+            # price hook — some stores mark the element and leave the currency
+            # to the page furniture, and requiring the marker loses them all.
+            if not PRICE_TEXT.search(text) and not _price_hook_value(ancestor)[0]:
                 continue
             if len(ancestor.css(f'a[href*="{link_match}"]')) != 1:
                 break
@@ -223,7 +268,7 @@ def parse_cards(
         if container is None:
             continue
 
-        price = _price_from(container)
+        price, currency = _price_from(container)
         title = _title_from(container, link)
         if not price or not title:
             continue
@@ -235,6 +280,7 @@ def parse_cards(
                 title=title,
                 url=url,
                 price=price,
+                currency=currency,
                 image=_image_from(container),
                 rating=rating,
                 review_count=review_count,

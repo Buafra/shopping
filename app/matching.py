@@ -90,6 +90,44 @@ def tokenise(text: str) -> list[str]:
     ]
 
 
+# Suffixes that sit right after a model number and name a *different* product
+# at a different price: an RTX 4070 Ti is not an RTX 4070, and a 4070 Super is
+# neither. Factory-overclock marks like "OC" are deliberately absent — those
+# are the same chip.
+VARIANT_SUFFIXES = {
+    "ti", "super", "xt", "xtx", "pro", "max", "plus", "ultra", "mini",
+    "lite", "se", "fe",
+}
+
+
+def variant_mismatch(query: str, title: str) -> bool:
+    """True when the title's model carries a variant suffix the query did not
+    ask for, or drops one the query did ask for."""
+    q_tokens = tokenise(query)
+    wanted_models = {t for t in q_tokens if _MODEL_TOKEN.match(t)}
+    if not wanted_models:
+        return False
+
+    q_set = set(q_tokens)
+    t_tokens = tokenise(title)
+
+    def suffix_after(tokens: list[str]) -> str | None:
+        for index, token in enumerate(tokens):
+            if token in wanted_models and index + 1 < len(tokens):
+                nxt = tokens[index + 1]
+                if nxt in VARIANT_SUFFIXES:
+                    return nxt
+        return None
+
+    asked = suffix_after(q_tokens)
+    offered = suffix_after(t_tokens)
+    if offered and offered not in q_set:
+        return True          # "rtx 4070" must not answer with a 4070 Ti
+    if asked and asked != offered:
+        return True          # "rtx 4070 ti" must not answer with a plain 4070
+    return False
+
+
 def model_tokens(text: str) -> set[str]:
     """The tokens that identify *which* product this is, not what kind."""
     return {t for t in tokenise(text) if _MODEL_TOKEN.match(t)}
@@ -114,6 +152,10 @@ def relevance(query: str, title: str) -> float:
     # Model numbers are identity, not description.
     wanted_models = model_tokens(query)
     if wanted_models and not wanted_models.issubset(t_tokens):
+        return 0.0
+
+    # ...and so is the variant suffix attached to them.
+    if variant_mismatch(query, title):
         return 0.0
 
     total = 0.0

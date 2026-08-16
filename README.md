@@ -64,6 +64,14 @@ Each offer scores 0–100 on five weighted components (`app/scoring.py`):
 Before anything is scored, listings that are not the product you asked for are
 removed:
 
+- **A variant suffix is part of the model.** An RTX 4070 Ti is not an RTX
+  4070, and a 4070 Super is neither — different cards at different prices. A
+  suffix the query did not ask for (`Ti`, `Super`, `XT`, `Pro`, `Max`) is a
+  mismatch, and so is dropping one it did ask for. Factory-overclock marks
+  like `OC` are not variants — that is the same chip.
+- **Currency is read from the page, never assumed.** AliExpress localises by
+  IP and quotes a UAE visitor in AED on a store the registry calls USD;
+  assuming the store default multiplied every price by 3.67.
 - **A model number is identity, not description.** A title missing the model
   you searched for scores zero, not partial credit. `WH-1000XM5` and
   `WF-1000XM5` differ by one letter and are different products (over-ear
@@ -270,7 +278,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 203 tests
+python -m pytest -q      # 215 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in

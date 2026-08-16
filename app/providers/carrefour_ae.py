@@ -90,6 +90,7 @@ class CarrefourProvider(Provider):
                 url=card.url,
                 image=card.image,
                 price=card.price,
+                currency=card.currency or self.spec.currency,
                 rating=card.rating,
                 review_count=card.review_count,
             )

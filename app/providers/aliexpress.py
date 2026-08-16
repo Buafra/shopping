@@ -113,8 +113,10 @@ class AliExpressProvider(Provider):
         structural = [
             self.make_offer(
                 title=card.title, url=card.url, image=card.image,
-                price=card.price, rating=card.rating,
-                review_count=card.review_count,
+                price=card.price,
+                # The page may localise by IP and quote AED on a US store.
+                currency=card.currency or self.spec.currency,
+                rating=card.rating, review_count=card.review_count,
             )
             for card in parse_cards(
                 tree.html or "", origin=ORIGIN, link_match="/item/",
