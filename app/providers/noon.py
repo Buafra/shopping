@@ -9,16 +9,22 @@ product record, because Noon moves the exact key path around between releases.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Iterator
 
 from ..browser import render
 from ..config import STORES
 from ..models import Offer
-from ..net import clean_text, fetch, parse_int, parse_price, parse_rating
+from ..net import (clean_text, fetch, parse_int, parse_price, parse_rating,
+                   rating_from_record, reviews_from_record)
 from .base import Provider
 
 ORIGIN = "https://www.noon.com"
 IMAGE_CDN = "https://f.nooncdn.com/p/"
+
+# `price`, `salePrice`, `sale_price`, `offerPrice`, `price_min` … all the same
+# idea. Deliberately excludes "priceless"-style false friends by anchoring.
+_PRICE_KEY = re.compile(r"(?:^|_|\b)price|price(?:$|_|\b)", re.I)
 
 
 def _iter_dicts(node: Any) -> Iterator[dict]:
@@ -35,7 +41,10 @@ def _iter_dicts(node: Any) -> Iterator[dict]:
 def _looks_like_product(record: dict) -> bool:
     has_id = any(k in record for k in ("sku", "productSku", "offerCode"))
     has_name = any(k in record for k in ("name", "productName", "title"))
-    has_price = any(k in record for k in ("salePrice", "price", "offerPrice"))
+    # Matched on shape, not spelling: a record whose price key gets renamed
+    # stops being recognised as a product at all, which reads downstream as
+    # "Noon has no stock" rather than as a parser that needs updating.
+    has_price = any(_PRICE_KEY.search(k) for k in record)
     return has_id and has_name and has_price
 
 
@@ -46,12 +55,34 @@ def _pick(record: dict, *keys: str) -> Any:
     return None
 
 
-def _rating_value(record: dict) -> Any:
-    """Noon quotes the rating either as a bare number or as {"value": 4.3}."""
-    raw = _pick(record, "product_rating", "rating", "averageRating")
-    if isinstance(raw, dict):
-        return raw.get("value") or raw.get("rating")
-    return raw
+def _price(record: dict) -> Any:
+    """Noon has shipped the price as `salePrice`, `sale_price` and `price`."""
+    return _pick(record, "salePrice", "sale_price", "offerPrice", "offer_price",
+                 "price")
+
+
+def _dom_rating(card) -> tuple[float | None, int | None]:
+    """Pull a rating out of a rendered card without depending on class names.
+
+    Stars are almost always exposed to screen readers, so the accessible label
+    survives redesigns that rename every class on the page. The review count
+    sits next to it in brackets.
+    """
+    for node in [card] + card.css("[aria-label], [title], [data-qa*='rating']"):
+        label = " ".join(
+            filter(None, (
+                node.attributes.get("aria-label"),
+                node.attributes.get("title"),
+            ))
+        )
+        if not label or not re.search(r"out of|star|rating", label, re.I):
+            continue
+        rating = parse_rating(label)
+        if rating is None:
+            continue
+        counts = re.search(r"\(?\s*([\d,.]+)\s*(?:ratings?|reviews?)", label, re.I)
+        return rating, (parse_int(counts.group(1)) if counts else None)
+    return None, None
 
 
 class NoonProvider(Provider):
@@ -94,7 +125,7 @@ class NoonProvider(Provider):
                 continue
 
             title = clean_text(str(_pick(record, "name", "productName", "title") or ""))
-            price = parse_price(_pick(record, "salePrice", "price", "offerPrice"))
+            price = parse_price(_price(record))
             if not title or price is None:
                 continue
 
@@ -111,10 +142,8 @@ class NoonProvider(Provider):
                     url=f"{ORIGIN}/uae-en/{sku}/p/",
                     image=image,
                     price=price,
-                    rating=parse_rating(_rating_value(record)),
-                    review_count=parse_int(
-                        _pick(record, "num_ratings", "ratingCount", "reviewCount")
-                    ),
+                    rating=rating_from_record(record),
+                    review_count=reviews_from_record(record),
                     in_stock=record.get("isBuyable", True) is not False,
                 )
             )
@@ -137,7 +166,11 @@ class NoonProvider(Provider):
             if not title or price is None:
                 continue
             url = href if href.startswith("http") else ORIGIN + href
-            offers.append(self.make_offer(title=title, url=url, price=price))
+            rating, reviews = _dom_rating(card)
+            offers.append(self.make_offer(
+                title=title, url=url, price=price,
+                rating=rating, review_count=reviews,
+            ))
             if len(offers) >= limit * 2:
                 break
         return offers

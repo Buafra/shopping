@@ -308,6 +308,80 @@ def parse_rating(raw: str | float | None, scale: float = 5.0) -> float | None:
     return round(value, 2)
 
 
+# -- ratings inside JSON product records ------------------------------------
+#
+# Stores that ship their listings as JSON rename these keys between releases —
+# `rating`, `product_rating`, `averageRating`, `star_rating` have all been the
+# right answer at some point. A fixed list of spellings silently degrades to
+# "no rating" on the next rename, and an offer with no rating loses every
+# comparison it should win, so match on the *shape* of the key instead.
+
+_RATING_KEY = re.compile(r"rat(?:ing)?|star", re.I)
+
+# Keys that count things rather than score them. "rating_count": 3 parses as a
+# perfectly plausible 3.0-star rating, so these must never feed the rating.
+_COUNT_KEY = re.compile(r"count|num|total|qty|quantity", re.I)
+
+_REVIEW_COUNT_KEY = re.compile(
+    r"(?:count|num|total)\w*(?:rat|review)"
+    r"|(?:rat|review)\w*(?:count|num|total)"
+    r"|^(?:reviews|ratings)$",
+    re.I,
+)
+
+# Where a nested {"value": 4.3, "count": 88} hides its two numbers.
+_NESTED_RATING = ("value", "rating", "average", "avg", "score")
+_NESTED_COUNT = ("count", "num", "total", "reviews", "ratings")
+
+
+def rating_from_record(record: dict, *, scale: float = 5.0) -> float | None:
+    """Find a 0–5 rating anywhere in a product record, by key shape."""
+    if not isinstance(record, dict):
+        return None
+    for key, value in record.items():
+        if not _RATING_KEY.search(key) or _COUNT_KEY.search(key):
+            continue
+        if isinstance(value, dict):
+            for inner in _NESTED_RATING:
+                found = parse_rating(value.get(inner), scale)
+                if found is not None:
+                    return found
+            continue
+        if isinstance(value, (int, float, str)):
+            found = parse_rating(value, scale)
+            if found is not None:
+                return found
+    return None
+
+
+def reviews_from_record(record: dict) -> int | None:
+    """Find a review/rating count anywhere in a product record, by key shape."""
+    if not isinstance(record, dict):
+        return None
+
+    # A count sitting beside the rating it belongs to is the most reliable
+    # reading, so nested records are checked before loose top-level keys.
+    for key, value in record.items():
+        if isinstance(value, dict) and _RATING_KEY.search(key):
+            for inner in _NESTED_COUNT:
+                if inner in value:
+                    found = parse_int(value[inner])
+                    if found is not None:
+                        return found
+
+    for key, value in record.items():
+        if not _REVIEW_COUNT_KEY.search(key):
+            continue
+        # A float here is a score, not a tally — "ratings": 4.3 is not 4 people.
+        if isinstance(value, float) and value != int(value):
+            continue
+        if isinstance(value, (int, str)):
+            found = parse_int(value)
+            if found is not None:
+                return found
+    return None
+
+
 def absolutise(href: str | None, origin: str) -> str | None:
     """Turn a possibly-relative href into a full URL."""
     if not href:

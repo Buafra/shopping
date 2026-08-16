@@ -148,6 +148,70 @@ def test_noon_survives_missing_blob():
     assert noon()._parse("<html><body>nothing here</body></html>", limit=10) == []
 
 
+def _noon_page(*records) -> str:
+    blob = json.dumps({"props": {"pageProps": {"catalog": {"hits": list(records)}}}})
+    return f'<html><body><script id="__NEXT_DATA__">{blob}</script></body></html>'
+
+
+def test_noon_reads_ratings_after_a_key_rename():
+    """Live Noon results came back with a price, a title and no rating at all.
+
+    The parser looked for three exact key spellings; a release that renames
+    them degrades silently to "no rating", and an unrated offer loses on
+    score even when it is the cheapest genuine listing."""
+    offers = noon()._parse(_noon_page({
+        "sku": "N1", "name": "MSI VENTUS GeForce RTX 4070 12G OC",
+        "sale_price": 2150.0,
+        "star_rating": 4.4, "totalReviews": 61, "isBuyable": True,
+    }), limit=10)
+
+    assert len(offers) == 1
+    assert offers[0].price == 2150.0        # snake_case price key
+    assert offers[0].rating == 4.4
+    assert offers[0].review_count == 61
+
+
+def test_noon_reports_no_rating_rather_than_inventing_one():
+    offers = noon()._parse(_noon_page({
+        "sku": "N2", "name": "Unrated Card", "salePrice": 999.0,
+        "stock_quantity": 4,
+    }), limit=10)
+
+    assert offers[0].rating is None
+    assert offers[0].review_count is None
+
+
+def test_noon_dom_fallback_reads_the_accessible_rating():
+    """When the JSON blob is gone the DOM path used to return no rating at
+    all — every Noon row scored as if the product were unreviewed."""
+    html = """
+    <html><body>
+      <a href="/uae-en/N9/p/">
+        <span title="MSI RTX 4070 Gaming X">MSI RTX 4070 Gaming X</span>
+        <div data-qa="price"><strong>2,199</strong></div>
+        <div aria-label="4.4 out of 5 stars (61 ratings)"></div>
+      </a>
+    </body></html>
+    """
+    offers = noon()._parse(html, limit=10)
+    assert len(offers) == 1
+    assert offers[0].rating == 4.4
+    assert offers[0].review_count == 61
+
+
+def test_noon_dom_fallback_without_a_rating_stays_none():
+    html = """
+    <html><body>
+      <a href="/uae-en/N9/p/">
+        <span title="MSI RTX 4070">MSI RTX 4070</span>
+        <div data-qa="price"><strong>2,199</strong></div>
+      </a>
+    </body></html>
+    """
+    offers = noon()._parse(html, limit=10)
+    assert offers[0].rating is None
+
+
 # ------------------------------------------------------------- Carrefour ---
 
 def test_carrefour_parses_json_api():

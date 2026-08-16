@@ -17,10 +17,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import collections
+import json
 import os
 import pathlib
 import re
 import sys
+from typing import Any, Iterator
 from urllib.parse import urlsplit
 
 # A diagnostic is a probe, not a search. Inheriting the normal 20s timeout
@@ -126,7 +128,107 @@ def summarise(html: str, provider, label: str) -> None:
     for offer in final[:3]:
         print(f"      - {offer.price:>9,.2f} {offer.currency}  {offer.title[:52]}")
 
+    report_field_coverage(parsed)
+    # A price and title with no rating is a parser gap, not a store that hides
+    # ratings — so when a field is missing everywhere, show what the page
+    # actually carries instead of leaving the key names to guesswork.
+    if parsed and not any(o.rating for o in parsed):
+        report_json_records(html)
+
     suggest_structure(tree)
+
+
+# -- field coverage ---------------------------------------------------------
+#
+# "6 offers" hides the difference between six complete listings and six
+# listings with no rating, which score far lower and lose every comparison.
+
+COVERAGE_FIELDS = ("rating", "review_count", "image", "url")
+
+
+def report_field_coverage(offers: list) -> None:
+    if not offers:
+        return
+    total = len(offers)
+    bits = []
+    for field in COVERAGE_FIELDS:
+        filled = sum(1 for o in offers if getattr(o, field, None))
+        flag = "" if filled == total else ("  <-- MISSING" if not filled else "  <-- partial")
+        bits.append(f"      {field:<13} {filled:>3}/{total}{flag}")
+    print("    field coverage   :")
+    print("\n".join(bits))
+
+
+# -- what the page's own JSON says ------------------------------------------
+
+RATING_KEY = re.compile(r"rat|review|star|score|count", re.I)
+NAME_KEY = re.compile(r"^(name|title|productName|product_name)$", re.I)
+PRICE_KEY = re.compile(r"price$|^price", re.I)
+
+
+def _iter_dicts(node: Any) -> Iterator[dict]:
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from _iter_dicts(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _iter_dicts(value)
+
+
+def _page_json(html: str) -> Iterator[Any]:
+    """Every JSON document embedded in the page, whatever ships it."""
+    tree = HTMLParser(html)
+    selectors = (
+        "script#__NEXT_DATA__",
+        'script[type="application/json"]',
+        'script[type="application/ld+json"]',
+    )
+    for selector in selectors:
+        for node in tree.css(selector):
+            try:
+                yield json.loads(node.text() or "")
+            except (json.JSONDecodeError, ValueError):
+                continue
+
+
+def _short(value: Any) -> str:
+    text = repr(value)
+    return text if len(text) <= 44 else text[:41] + "..."
+
+
+def report_json_records(html: str, limit: int = 2) -> None:
+    """Print the keys of the page's own product records.
+
+    When a store ships its listings as JSON, the fix for a missing field is a
+    key name — and key names change between releases. Reading them off the
+    page beats trying three plausible spellings and shipping the wrong one.
+    """
+    records = []
+    for document in _page_json(html):
+        for record in _iter_dicts(document):
+            keys = list(record)
+            if any(NAME_KEY.match(k) for k in keys) and any(PRICE_KEY.search(k) for k in keys):
+                records.append(record)
+        if records:
+            break
+
+    if not records:
+        print("    embedded JSON    : no product-shaped records found")
+        return
+
+    print(f"    embedded JSON    : {len(records)} product-shaped record(s)")
+    for record in records[:limit]:
+        name = next((str(record[k]) for k in record if NAME_KEY.match(k)), "?")
+        print(f"      record: {name[:56]}")
+        rating_keys = [k for k in record if RATING_KEY.search(k)]
+        if rating_keys:
+            print("        rating/review-ish keys:")
+            for key in sorted(rating_keys):
+                print(f"          {key} = {_short(record[key])}")
+        else:
+            print("        no rating/review-ish keys on this record")
+        print(f"        all keys: {', '.join(sorted(record)[:28])}")
 
 
 def href_pattern(href: str) -> str:

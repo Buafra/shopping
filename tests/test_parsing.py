@@ -108,3 +108,74 @@ def test_fetch_error_renders_hint():
     err = FetchError("HTTP 403 from amazon.ae", kind="blocked", hint="try a residential IP")
     assert "403" in str(err) and "residential IP" in str(err)
     assert err.kind == "blocked"
+
+
+# ---- ratings hidden inside JSON product records --------------------------
+#
+# Noon returned five graphics cards with a price, a title and no rating at
+# all. A missing rating is not neutral: rating and review volume are 35% of
+# the score, so those offers lost comparisons they might have won.
+
+@pytest.mark.parametrize("record,expected", [
+    ({"rating": 4.3}, 4.3),
+    ({"product_rating": 4.3}, 4.3),
+    ({"averageRating": 4.3}, 4.3),
+    ({"star_rating": "4.3"}, 4.3),
+    ({"productRating": "4.3 out of 5"}, 4.3),
+    # The shape that broke: the score nested beside its own count.
+    ({"product_rating": {"value": 4.3, "count": 88}}, 4.3),
+    ({"rating": {"average": 4.3}}, 4.3),
+])
+def test_rating_found_whatever_the_key_is_called(record, expected):
+    from app.net import rating_from_record
+
+    assert rating_from_record(record) == expected
+
+
+def test_a_review_count_is_never_read_as_a_rating():
+    """"rating_count": 3 parses as a perfectly plausible 3.0 stars.
+
+    That is the failure mode that makes shape-matching dangerous, so counting
+    keys are excluded from the rating scan outright."""
+    from app.net import rating_from_record
+
+    assert rating_from_record({"rating_count": 3}) is None
+    assert rating_from_record({"num_ratings": 4}) is None
+    assert rating_from_record({"ratingCount": 2, "rating": 4.6}) == 4.6
+
+
+def test_no_rating_is_reported_as_none_not_zero():
+    from app.net import rating_from_record
+
+    assert rating_from_record({"sku": "X", "name": "Thing", "price": 10}) is None
+    assert rating_from_record({}) is None
+    assert rating_from_record(None) is None
+
+
+@pytest.mark.parametrize("record,expected", [
+    ({"num_ratings": 312}, 312),
+    ({"ratingCount": 312}, 312),
+    ({"reviewCount": 312}, 312),
+    ({"reviews": 312}, 312),
+    ({"ratings": "1,204"}, 1204),
+    ({"product_rating": {"value": 4.5, "count": 312}}, 312),
+])
+def test_review_counts_found_whatever_the_key_is_called(record, expected):
+    from app.net import reviews_from_record
+
+    assert reviews_from_record(record) == expected
+
+
+def test_a_rating_is_never_read_as_a_review_count():
+    """"rating": 4.3 is a score. Rounding it to "4 reviews" would then be fed
+    to the Bayesian shrink as near-zero confidence — quietly wrong twice."""
+    from app.net import reviews_from_record
+
+    assert reviews_from_record({"rating": 4.3}) is None
+    assert reviews_from_record({"rating": 4.3, "num_ratings": 88}) == 88
+
+
+def test_stock_quantities_are_not_review_counts():
+    from app.net import reviews_from_record
+
+    assert reviews_from_record({"quantity": 14, "stock_count": 3}) is None
