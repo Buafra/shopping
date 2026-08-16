@@ -307,6 +307,50 @@ Landed cost matters more here than anywhere: a GPU that looks cheap on a US
 site attracts 5% duty and 5% VAT on a high-value item, which routinely erases
 the gap against local stock.
 
+## Using a proxy to reach blocked stores
+
+Four stores answer a UAE home connection with a challenge rather than
+results. That is an IP-reputation decision, so the fix is to make requests
+from an address that does not look automated — a **residential** or
+**mobile** proxy. A datacentre proxy will not help; those ranges are exactly
+what the stores already block.
+
+```powershell
+# this session only
+$env:SCRAPER_PROXY = "http://USER:PASS@gateway.provider.com:7000"
+python cli.py "rtx 4070"
+
+# permanently, for your account
+setx SCRAPER_PROXY "http://USER:PASS@gateway.provider.com:7000"
+```
+
+```bash
+# macOS / Linux
+export SCRAPER_PROXY="http://USER:PASS@gateway.provider.com:7000"
+```
+
+If the password contains `@`, `:` or `/`, percent-encode it — `p@ss` becomes
+`p%40ss`. Check it is live before searching:
+
+```bash
+curl http://127.0.0.1:8000/api/health     # proxy.configured, proxy.server, proxy.used_by
+python diagnose.py amazon_ae              # should still return offers through the proxy
+```
+
+Both the HTTP client and the headless browser route through it. What it does
+and does not buy you:
+
+| | |
+|---|---|
+| Fixes | being blocked *because of your IP* — Noon's silent drop, eBay's interstitial, AliExpress's rate-limit |
+| Does not fix | a CAPTCHA already being shown. A proxy avoids being challenged; it does not answer a challenge |
+| Costs | residential proxies are billed per GB, typically a few dollars per month at this volume |
+| Slows | every request by 100–400ms |
+
+Requests are one search per user action, so bandwidth is small. Keep it that
+way: polling `--recheck all` on a tight loop is what earned the blocks in the
+first place.
+
 ## When a store breaks
 
 Stores redesign, and a `parse` failure means that store's selectors are stale.
@@ -329,7 +373,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 256 tests
+python -m pytest -q      # 262 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in

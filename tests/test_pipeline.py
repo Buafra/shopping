@@ -414,3 +414,42 @@ def test_unknown_history_ids_are_404(client):
     assert client.get("/api/history/999999").status_code == 404
     assert client.post("/api/history/999999/recheck").status_code == 404
     assert client.delete("/api/history/999999").status_code == 404
+
+
+# ------------------------------------------------------------------ proxy ---
+
+@pytest.mark.parametrize("raw,expected", [
+    ("http://gate.example.com:8080", {"server": "http://gate.example.com:8080"}),
+    ("http://user:pass@gate.example.com:7000",
+     {"server": "http://gate.example.com:7000", "username": "user", "password": "pass"}),
+    # Proxy passwords routinely contain @ or :, so they arrive percent-encoded.
+    ("http://user:pa%40ss@gate.example.com:7000",
+     {"server": "http://gate.example.com:7000", "username": "user", "password": "pa@ss"}),
+    ("", None),
+    ("not a url", None),
+])
+def test_scraper_proxy_is_translated_for_the_browser(raw, expected, monkeypatch):
+    """The browser fallback must use the proxy too. Wiring it only into the
+    HTTP client leaves the browser going out on the real IP, so the setting
+    half-works in a way nothing reports."""
+    import importlib
+
+    monkeypatch.setenv("SCRAPER_PROXY", raw)
+    import app.browser as browser_module
+    import app.config as config_module
+
+    importlib.reload(config_module)
+    importlib.reload(browser_module)
+    try:
+        assert browser_module.proxy_settings() == expected
+    finally:
+        monkeypatch.delenv("SCRAPER_PROXY", raising=False)
+        importlib.reload(config_module)
+        importlib.reload(browser_module)
+
+
+def test_health_reports_proxy_state_without_leaking_credentials(client):
+    body = client.get("/api/health").json()
+    assert "proxy" in body
+    assert set(body["proxy"]) == {"configured", "server", "authenticated", "used_by"}
+    assert "password" not in str(body["proxy"]).lower()

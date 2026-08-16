@@ -14,10 +14,39 @@ import glob
 import logging
 import os
 import random
+from urllib.parse import unquote, urlparse
 
 from .config import SETTINGS, USER_AGENTS
 
 log = logging.getLogger(__name__)
+
+
+def proxy_settings() -> dict | None:
+    """Translate SCRAPER_PROXY into Playwright's proxy option.
+
+    Without this the browser fallback ignores the proxy entirely and goes out
+    on the real IP — so a store that blocks you would still see you, and the
+    setting would appear to half-work for reasons nobody could see.
+    """
+    raw = SETTINGS.proxy_url
+    if not raw:
+        return None
+
+    parsed = urlparse(raw)
+    if not parsed.hostname:
+        log.warning("SCRAPER_PROXY %r is not a usable URL; ignoring", raw)
+        return None
+
+    server = f"{parsed.scheme or 'http'}://{parsed.hostname}"
+    if parsed.port:
+        server += f":{parsed.port}"
+
+    settings: dict = {"server": server}
+    if parsed.username:
+        settings["username"] = unquote(parsed.username)
+    if parsed.password:
+        settings["password"] = unquote(parsed.password)
+    return settings
 
 
 def find_chromium() -> str | None:
@@ -108,7 +137,7 @@ async def _get_browser():
         except ImportError as exc:  # pragma: no cover - depends on install
             raise BrowserUnavailable("playwright is not installed") from exc
 
-        launch_args = {
+        launch_args: dict = {
             "headless": True,
             "args": [
                 "--no-sandbox",
@@ -123,6 +152,13 @@ async def _get_browser():
                 "--disable-quic",
             ],
         }
+
+        # Chromium wants the proxy at launch; a context-level proxy alone is
+        # not honoured reliably for all request types.
+        proxy = proxy_settings()
+        if proxy:
+            launch_args["proxy"] = proxy
+            log.info("browser will route through proxy %s", proxy["server"])
 
         try:
             _playwright = await async_playwright().start()

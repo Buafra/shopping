@@ -207,10 +207,20 @@ async def api_health() -> JSONResponse:
     except browser.BrowserUnavailable as exc:
         browser_ok, browser_detail = False, str(exc)
 
+    from .browser import proxy_settings
+    proxy = proxy_settings()
+
     return JSONResponse(
         {
             "status": "ok",
             "stores_registered": len(STORES),
+            "proxy": {
+                "configured": bool(SETTINGS.proxy_url),
+                # Never echo the credentials back out.
+                "server": proxy["server"] if proxy else None,
+                "authenticated": bool(proxy and proxy.get("username")),
+                "used_by": ["http", "browser"] if proxy else [],
+            },
             "browser_fallback": {"enabled": SETTINGS.use_browser_fallback,
                                  "ok": browser_ok, "detail": browser_detail},
             "fx": {"source": source, "usd_to_aed": rates.get("USD")},
