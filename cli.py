@@ -135,7 +135,10 @@ def render(response, args=None) -> None:
             if kept == 0:
                 mark = f"{YELLOW}!{RESET}"
         else:
-            detail = (status.error or "no results")[:64]
+            # Name the path that was used. A store failing in a second has not
+            # tried the browser, and that is a different fault from one that
+            # rendered for twenty seconds and still found nothing.
+            detail = f"[{status.method}] {(status.error or 'no results')}"[:70]
         out(f"  {mark} {status.store_label:<18} {DIM}{status.elapsed_ms/1000:>5.1f}s  "
               f"{detail}{RESET}")
 

@@ -416,3 +416,24 @@ def test_diagnose_picks_a_query_the_named_stores_could_answer():
     assert diagnose.default_query_for(["amazon_ae", "microless"], None) \
         == "sony wh-1000xm5"
     assert diagnose.default_query_for(["microless"], "ddr5 ram") == "ddr5 ram"
+
+
+def test_prices_only_in_javascript_are_reported_as_such():
+    """The message said "prices are on the page" for six stores whose only
+    prices were inside <script> templates. That points at the card layout when
+    nothing had rendered at all — opposite fixes again."""
+    p = provider()
+    p.last_html = (
+        '<html><body><div>Loading...</div>'
+        '<script>var fmt = "AED 1,949.00";</script></body></html>'
+    )
+
+    message, kind = p.describe_empty_result()
+    assert "only inside the page's JavaScript" in message
+    assert kind == "parse"
+
+
+def test_visible_prices_still_point_at_the_card_layout():
+    p = provider()
+    p.last_html = "<html><body><div>AED 2,150.00</div><div>AED 1,999.00</div></body></html>"
+    assert "product_path" in p.describe_empty_result()[0]

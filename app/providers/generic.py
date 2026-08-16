@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 
-from ..browser import render
+from ..browser import render, visible_html
 from ..config import DEFAULT_SEARCH_PATTERNS, STORES, StoreSpec
 from ..models import Offer
 from ..net import FetchError, base_headers, fetch
@@ -131,7 +131,20 @@ class GenericProvider(Provider):
         if not html:
             return ("no page was returned by any candidate search URL", "parse")
 
-        if not PRICE_TEXT.search(html):
+        # Prices inside a <script> are not prices on the page. Matching the raw
+        # HTML reported "prices are on the page" for six stores whose only
+        # prices were in JavaScript templates — pointing at the card layout
+        # when the real problem was that no products had rendered at all.
+        rendered = visible_html(html)
+        if not PRICE_TEXT.search(rendered):
+            if PRICE_TEXT.search(html):
+                return (
+                    "prices exist only inside the page's JavaScript, never in "
+                    "the rendered page — the listings are fetched by a script "
+                    "we did not see finish, or the store served a shell "
+                    f"instead of results. Run: python diagnose.py {self.spec.key}",
+                    "parse",
+                )
             return (
                 "the page loaded but contains no prices at all — the search "
                 "URL is probably wrong for this store, or its results are "
@@ -140,9 +153,9 @@ class GenericProvider(Provider):
                 "parse",
             )
         return (
-            "prices are on the page but no product cards could be read from "
-            "them — set `product_path` for this store in app/config.py, or run "
-            f"python diagnose.py {self.spec.key} to see the card layout",
+            "prices are visible on the page but no product cards could be read "
+            "from them — set `product_path` for this store in app/config.py, or "
+            f"run python diagnose.py {self.spec.key} to see the card layout",
             "parse",
         )
 
