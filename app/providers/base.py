@@ -19,6 +19,7 @@ from urllib.parse import quote_plus
 
 from selectolax.parser import HTMLParser
 
+from .. import matching
 from ..browser import BrowserUnavailable
 from ..browser import describe_error as describe_browser_error
 from ..config import SETTINGS, StoreSpec
@@ -129,7 +130,7 @@ class Provider(abc.ABC):
                 error_kind = error_kind or "unreachable"
                 log.info("%s browser path failed: %s", self.spec.key, browser_error)
 
-        offers = self._postprocess(offers, limit)
+        offers = self._postprocess(offers, limit, query)
         elapsed = int((time.perf_counter() - started) * 1000)
 
         if not offers and error is None:
@@ -156,8 +157,22 @@ class Provider(abc.ABC):
         )
         return offers, status
 
-    def _postprocess(self, offers: list[Offer], limit: int) -> list[Offer]:
-        """Drop junk, de-duplicate by URL, keep the cheapest N."""
+    def _postprocess(
+        self, offers: list[Offer], limit: int, query: str = ""
+    ) -> list[Offer]:
+        """Drop junk, de-duplicate, and keep the store's most relevant N.
+
+        Truncation order matters more than it looks. Keeping the *cheapest* N
+        keeps the accessories: a search for headphones returns cases, cables
+        and screen protectors well below the real price, so the six cheapest
+        hits are six things nobody searched for, and the actual product is
+        discarded here — before the relevance filter downstream ever sees it.
+        Amazon.ae did exactly that: six offers fetched, none survived.
+
+        So candidates that are clearly not the product are dropped first, and
+        what remains is truncated in the store's own order, which is already
+        sorted by that store's relevance ranking.
+        """
         seen: set[str] = set()
         kept: list[Offer] = []
         for offer in offers:
@@ -169,5 +184,14 @@ class Provider(abc.ABC):
             seen.add(key)
             kept.append(offer)
 
-        kept.sort(key=lambda o: o.price)
+        if query:
+            relevant = [
+                o for o in kept
+                if matching.relevance(query, o.title) >= 0.5
+                and not matching.looks_like_accessory(query, o.title)
+            ]
+            # If nothing matches strictly, fall back rather than starve the
+            # comparison — the cross-store filter will judge it properly.
+            kept = relevant or kept
+
         return kept[:limit]

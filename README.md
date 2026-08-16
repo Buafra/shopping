@@ -75,6 +75,9 @@ removed:
   different warranty. Pass `--include-used` (CLI) or `include_used=true` (API)
   to see them.
 - **Accessories are dropped.** Otherwise a AED 19 case wins a phone search.
+  This happens *inside each provider*, before its results are truncated —
+  otherwise the cheap accessories fill the per-store quota and the real
+  product never reaches the comparison at all.
 
 Two deliberate judgement calls:
 
@@ -244,7 +247,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 188 tests
+python -m pytest -q      # 192 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in

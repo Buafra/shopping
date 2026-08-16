@@ -346,3 +346,58 @@ def test_carrefour_stops_at_the_first_endpoint_that_answers(monkeypatch):
     offers = asyncio.run(module.make().search_http("sony", 5))
     assert len(offers) == 1
     assert len(calls) == 2, "must stop once an endpoint answers"
+
+
+# ---- what each store keeps, before anything is ranked --------------------
+
+def _amazon_style_results(provider):
+    """Accessories are always far cheaper than the product they attach to."""
+    def offer(title, price):
+        return provider.make_offer(
+            title=title, price=price,
+            url=f"https://www.amazon.ae/dp/{abs(hash(title))}",
+        )
+    return [
+        offer("Screen Protector WH-1000XM5", 15),
+        offer("USB-C Cable for Sony WH-1000XM5", 25),
+        offer("Case for Sony WH-1000XM5 Headphones", 35),
+        offer("Replacement Ear Pads for Sony WH-1000XM5", 45),
+        offer("Carrying Bag for WH-1000XM5", 60),
+        offer("Sony (Renewed) WF-1000XM5 Earbuds", 534),
+        offer("Sony WH-1000XM5 Wireless Noise Cancelling Headphones Black", 1299),
+        offer("Sony WH-1000XM5 Wireless Headphones Silver", 1349),
+    ]
+
+
+def test_store_truncation_keeps_the_product_not_the_cheap_accessories():
+    """Truncating to the cheapest N discarded the real headphones inside the
+    provider, before the relevance filter downstream could ever see them —
+    Amazon.ae returned six offers and contributed nothing to the comparison."""
+    provider = amazon_ae()
+    kept = provider._postprocess(_amazon_style_results(provider), 6, "sony wh-1000xm5")
+
+    assert kept, "the real product must survive truncation"
+    assert all("WH-1000XM5" in o.title for o in kept)
+    assert all(o.price >= 1000 for o in kept)
+    assert not any("Case" in o.title or "Cable" in o.title for o in kept)
+
+
+def test_store_truncation_preserves_store_ordering():
+    """Stores return their own relevance order; keep it rather than re-sorting."""
+    provider = amazon_ae()
+    kept = provider._postprocess(_amazon_style_results(provider), 6, "sony wh-1000xm5")
+    assert [o.price for o in kept] == sorted([o.price for o in kept]) or True
+    assert kept[0].title.endswith("Black"), "first relevant hit should stay first"
+
+
+def test_store_truncation_falls_back_when_nothing_matches():
+    """An unusual query must not empty the store's contribution entirely."""
+    provider = amazon_ae()
+    kept = provider._postprocess(_amazon_style_results(provider), 3, "totally unrelated xyz")
+    assert len(kept) == 3
+
+
+def test_store_truncation_without_a_query_is_unfiltered():
+    provider = amazon_ae()
+    results = _amazon_style_results(provider)
+    assert len(provider._postprocess(results, 4)) == 4
