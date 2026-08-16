@@ -289,26 +289,31 @@ async def test_parse_failure_is_reported_as_such(monkeypatch):
 
 # ------------------------------------------------------- store enable/disable
 
-def test_disabled_stores_env_is_validated_and_applied(monkeypatch):
-    """A CAPTCHA-walled store must be switchable off without editing code,
-    and a typo must fail loudly rather than silently disabling nothing."""
-    import importlib
+def test_disabled_stores_is_validated_and_applied():
+    """A CAPTCHA-walled store must be switchable off without editing code, and
+    a typo must fail loudly rather than silently disabling nothing.
 
-    import app.config as config_module
+    Exercised through the function rather than by reloading app.config: a
+    reload builds a fresh STORES dict, and every module that already imported
+    the old one keeps using it, so two registries end up disagreeing about
+    which stores exist.
+    """
+    from app.config import STORES, apply_disabled_stores
 
-    monkeypatch.setenv("DISABLED_STORES", "sharaf_dg, carrefour_ae")
-    reloaded = importlib.reload(config_module)
-    try:
-        assert reloaded.STORES["sharaf_dg"].enabled is False
-        assert reloaded.STORES["carrefour_ae"].enabled is False
-        assert reloaded.STORES["amazon_ae"].enabled is True
+    registry = dict(STORES)
+    applied = apply_disabled_stores(registry, "sharaf_dg, carrefour_ae")
 
-        monkeypatch.setenv("DISABLED_STORES", "not_a_store")
-        with pytest.raises(ValueError, match="unknown store"):
-            importlib.reload(config_module)
-    finally:
-        monkeypatch.delenv("DISABLED_STORES", raising=False)
-        importlib.reload(config_module)
+    assert applied == {"sharaf_dg", "carrefour_ae"}
+    assert registry["sharaf_dg"].enabled is False
+    assert registry["carrefour_ae"].enabled is False
+    assert registry["amazon_ae"].enabled is True
+    # The live registry must be untouched by the copy.
+    assert STORES["sharaf_dg"].enabled is True
+
+    with pytest.raises(ValueError, match="unknown store"):
+        apply_disabled_stores(dict(STORES), "not_a_store")
+
+    assert apply_disabled_stores(dict(STORES), "") == set()
 
 
 def test_store_deadline_covers_both_phases():
@@ -579,3 +584,37 @@ def test_impersonated_response_exposes_what_providers_read():
     assert wrapped.text == "<html>ok</html>"
     assert wrapped.json() == {"ok": True}
     assert wrapped.http_version == "HTTP/2"
+
+
+# --------------------------------------------- explaining an empty store set ---
+
+@pytest.mark.asyncio
+async def test_asking_for_a_disabled_store_says_why(monkeypatch):
+    """"No stores match the requested filters" is true and useless. The usual
+    cause is DISABLED_STORES set in a shell an hour ago and since forgotten.
+
+    The registry entry is patched rather than reloading app.config: a reload
+    builds a new STORES dict, and build_all keeps using the one it imported,
+    so the test would pass against a registry nothing else can see.
+    """
+    from dataclasses import replace
+
+    from app.config import STORES
+
+    monkeypatch.setitem(STORES, "noon", replace(STORES["noon"], enabled=False))
+    monkeypatch.setenv("DISABLED_STORES", "noon")
+
+    with pytest.raises(ValueError, match="DISABLED_STORES"):
+        await aggregator.search("rtx 4070", stores=["noon"])
+
+
+@pytest.mark.asyncio
+async def test_asking_for_an_unknown_store_lists_the_real_ones():
+    with pytest.raises(ValueError, match="unknown store"):
+        await aggregator.search("rtx 4070", stores=["nosuchstore"])
+
+
+@pytest.mark.asyncio
+async def test_a_store_outside_the_requested_market_is_explained():
+    with pytest.raises(ValueError, match="not in the"):
+        await aggregator.search("rtx 4070", stores=["newegg"], markets=[Market.LOCAL])

@@ -138,25 +138,33 @@ STORES: dict[str, StoreSpec] = {
 }
 
 
-def _disabled_from_env() -> set[str]:
-    raw = os.environ.get("DISABLED_STORES", "")
-    return {k.strip() for k in raw.split(",") if k.strip()}
+def apply_disabled_stores(registry: dict[str, StoreSpec], raw: str) -> set[str]:
+    """Switch off the stores named in `raw`, in place. Returns their keys.
 
+    A store behind a CAPTCHA or a retired API cannot be fixed by better
+    selectors, and leaving it on costs every search the full timeout budget:
+      DISABLED_STORES=sharaf_dg,carrefour_ae
 
-# A store behind a CAPTCHA or a retired API cannot be fixed by better
-# selectors, and leaving it on costs every search the full timeout budget.
-# Turn those off here rather than editing the registry:
-#   DISABLED_STORES=sharaf_dg,carrefour_ae
-_DISABLED = _disabled_from_env()
-if _DISABLED:
-    unknown = _DISABLED - set(STORES)
+    Mutates the registry rather than rebuilding it, so anything that already
+    imported the dict keeps seeing the truth. Rebuilding is how a reload in a
+    test leaves two registries disagreeing about which stores exist.
+    """
+    wanted = {k.strip() for k in (raw or "").split(",") if k.strip()}
+    if not wanted:
+        return set()
+
+    unknown = wanted - set(registry)
     if unknown:
         raise ValueError(
             f"DISABLED_STORES names unknown store(s): {', '.join(sorted(unknown))}. "
-            f"Known: {', '.join(STORES)}"
+            f"Known: {', '.join(registry)}"
         )
-    for _key in _DISABLED:
-        STORES[_key] = replace(STORES[_key], enabled=False)
+    for key in wanted:
+        registry[key] = replace(registry[key], enabled=False)
+    return wanted
+
+
+apply_disabled_stores(STORES, os.environ.get("DISABLED_STORES", ""))
 
 
 @dataclass(frozen=True)

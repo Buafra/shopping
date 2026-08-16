@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 
 from . import blocklist, fx, matching, pricing, scoring
@@ -52,6 +53,42 @@ async def _run_provider(
                 ok=False,
                 error=f"{type(exc).__name__}: {exc}",
             )
+
+
+def _explain_no_stores(stores: list[str] | None, markets: list[Market] | None) -> str:
+    """Say which named store could not be used, and why.
+
+    "No stores match the requested filters" is true and useless: the usual
+    cause is a store switched off by DISABLED_STORES in a shell the user set
+    up an hour ago and has since forgotten.
+    """
+    from .config import STORES
+
+    if not stores:
+        market_names = ", ".join(m.value for m in markets) if markets else "any"
+        return f"no stores are enabled for the {market_names} market"
+
+    named = [s.strip() for s in stores if s.strip()]
+    unknown = [s for s in named if s not in STORES]
+    disabled = [s for s in named if s in STORES and not STORES[s].enabled]
+
+    parts = []
+    if unknown:
+        parts.append(
+            f"unknown store(s): {', '.join(unknown)}. Known: {', '.join(STORES)}"
+        )
+    if disabled:
+        parts.append(
+            f"{', '.join(disabled)} is switched off by DISABLED_STORES "
+            f"(currently: {os.environ.get('DISABLED_STORES', '')!r}). "
+            f"Clear it to use it again"
+        )
+    if not parts and markets:
+        market_names = ", ".join(m.value for m in markets)
+        parts.append(
+            f"{', '.join(named)} is not in the {market_names} market"
+        )
+    return "; ".join(parts) or "no stores match the requested filters"
 
 
 def _diagnose_total_failure(statuses: list[StoreStatus]) -> str:
@@ -120,7 +157,7 @@ async def search(
 
     providers = build_all(markets=markets, only=stores)
     if not providers:
-        raise ValueError("no stores match the requested filters")
+        raise ValueError(_explain_no_stores(stores, markets))
 
     # Skip stores that refused us recently. Explicitly naming stores overrides
     # this — asking for a store by name is a request to try it regardless.

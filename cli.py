@@ -301,9 +301,21 @@ async def main() -> int:
         if args.unblock:
             target = None if args.unblock.lower() == "all" else args.unblock
             removed = blocklist.clear(target)
-            out(f"Cleared {removed} blocked-store record(s); they will be tried "
-                f"again on the next search.")
-            return 0
+            if removed:
+                out(f"Cleared {removed} blocked-store record(s); they will be "
+                    f"tried again on the next search.")
+                return 0
+
+            out(f"{target or 'No store'} was not on the blocked list.")
+            from app.config import STORES
+            if target and target in STORES and not STORES[target].enabled:
+                out(f"{YELLOW}note:{RESET} {target} is switched off by "
+                    f"DISABLED_STORES, which is a separate thing. Clear that "
+                    f"variable to use it again.")
+            elif target and target not in STORES:
+                out(f"{YELLOW}note:{RESET} no store is called {target!r}. "
+                    f"Known: {', '.join(STORES)}")
+            return 1
 
         if args.history:
             render_history()
@@ -315,7 +327,11 @@ async def main() -> int:
         if not args.query:
             parser.error("give a query, or use --history / --recheck")
 
-        response = await run_search(args.query, args)
+        try:
+            response = await run_search(args.query, args)
+        except ValueError as exc:
+            out(f"{RED}Cannot run that search:{RESET} {exc}")
+            return 2
         if args.json:
             print(json.dumps(response.model_dump(mode="json"), indent=2, ensure_ascii=False))
         else:

@@ -328,6 +328,10 @@ store answers the same way an hour later, and retrying costs the full timeout
 budget each search. A store reporting `blocked` is remembered and skipped for
 24 hours (`SKIP_BLOCKED_HOURS`), then retried automatically.
 
+`DISABLED_STORES` and the blocked list are separate things: the first is your
+decision, the second is the store's. Asking for a store that is switched off
+now says so, rather than reporting that no stores matched.
+
 ```bash
 python cli.py --blocked          # what is being skipped, and why
 python cli.py --unblock noon     # try one again right now
@@ -440,7 +444,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 281 tests
+python -m pytest -q      # 284 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in
