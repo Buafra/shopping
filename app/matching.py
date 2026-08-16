@@ -128,6 +128,45 @@ def variant_mismatch(query: str, title: str) -> bool:
     return False
 
 
+# A product model number: 4-5 digits, optionally prefixed (rtx4070) or
+# suffixed (3060ti). Deliberately excludes 3-digit numbers and capacities like
+# "12gb" or "128" (bit width), which appear in perfectly ordinary titles.
+PRODUCT_MODEL = re.compile(
+    r"^(?:[a-z]{1,4})?\d{4,5}(?:ti|xt|xtx|super|s|k|kf|kb|f|x|x3d|hx|hs|h|u)?$"
+)
+
+# A listing selling a whole system rather than the part that was searched for.
+SYSTEM_TERMS = {
+    "gaming pc", "gaming desktop", "gaming rig", "gaming tower",
+    "desktop pc", "desktop computer", "pc desktop", "tower pc",
+    "prebuilt", "pre-built", "barebone", "workstation", "mini pc",
+    "all-in-one", "complete pc", "full set", "gaming bundle",
+}
+
+
+def product_models(text: str) -> set[str]:
+    return {t for t in tokenise(text) if PRODUCT_MODEL.match(t)}
+
+
+def lists_multiple_products(query: str, title: str) -> bool:
+    """True for a listing that covers several different products at once.
+
+    Marketplaces sell one page across many SKUs — "3060TI 3050 3070 GPU RTX
+    4070 4060TI" — and advertise the price of the cheapest. The result looks
+    like an RTX 4070 for AED 959 when the 959 buys a 3050, which then anchors
+    the whole comparison as "the cheapest listing".
+    """
+    extra = product_models(title) - product_models(query)
+    return len(extra) >= 2
+
+
+def looks_like_a_system(query: str, title: str) -> bool:
+    """A prebuilt PC containing the part is not the part."""
+    title_l = (title or "").lower()
+    query_l = (query or "").lower()
+    return any(term in title_l and term not in query_l for term in SYSTEM_TERMS)
+
+
 def model_tokens(text: str) -> set[str]:
     """The tokens that identify *which* product this is, not what kind."""
     return {t for t in tokenise(text) if _MODEL_TOKEN.match(t)}
@@ -156,6 +195,11 @@ def relevance(query: str, title: str) -> float:
 
     # ...and so is the variant suffix attached to them.
     if variant_mismatch(query, title):
+        return 0.0
+
+    # A page selling six GPUs at the price of the cheapest is not an offer for
+    # any one of them, and a prebuilt PC is not a graphics card.
+    if lists_multiple_products(query, title) or looks_like_a_system(query, title):
         return 0.0
 
     total = 0.0

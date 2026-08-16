@@ -82,6 +82,12 @@ removed:
   stock on price without being the same purchase — different condition,
   different warranty. Pass `--include-used` (CLI) or `include_used=true` (API)
   to see them.
+- **A listing selling many products is an offer for none of them.**
+  Marketplaces put six GPUs on one page — "3060TI 3050 3070 RTX 4070 4060TI" —
+  and advertise the cheapest variant's price. That surfaced as an RTX 4070 for
+  AED 959 when the 959 buys a 3050.
+- **A prebuilt PC is not a graphics card.** A system containing the part you
+  searched for is a different purchase, unless you asked for a system.
 - **Accessories are dropped.** Otherwise a AED 19 case wins a phone search.
   This happens *inside each provider*, before its results are truncated —
   otherwise the cheap accessories fill the per-store quota and the real
@@ -278,7 +284,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 215 tests
+python -m pytest -q      # 227 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in

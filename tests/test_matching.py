@@ -239,3 +239,47 @@ def test_variant_rule_does_not_fire_without_a_model_number():
 
     assert not variant_mismatch("air fryer", "Philips Air Fryer XL Pro")
     assert relevance("air fryer", "Philips Digital Air Fryer 4.1L") > 0.5
+
+
+# ---- one listing selling many products is an offer for none of them ------
+
+@pytest.mark.parametrize("title", [
+    "بطاقات رسومات 3060TI 3050 3070 GPU RTX 4070 4060TI",
+    "بطاقة فيديو للألعاب RTX 5080/RTX5070TI/RTX 5070/RTX 4070",
+    "Graphics Card RTX 3060 3070 4060 4070 Gaming GPU",
+])
+def test_multi_model_listings_are_rejected(title):
+    """Marketplaces sell one page across many SKUs and advertise the cheapest.
+    A live run surfaced such a listing at AED 959 as the second-best "RTX 4070"
+    and then anchored the recommendation's savings against it — the 959 buys a
+    3050, not a 4070."""
+    assert relevance("rtx 4070", title) == 0.0
+
+
+@pytest.mark.parametrize("title", [
+    "MXZ Intel Core i7 14700KF 5.2GHz, GeForce RTX 4070, 32GB DDR5 Gaming Desktop",
+    "MXZ Gaming PC, AMD Ryzen 7 7800X3D, RTX 4070 Super, 32GB",
+    "Prebuilt Gaming Rig RTX 4070 Ryzen 5",
+])
+def test_a_prebuilt_system_is_not_the_component(title):
+    assert relevance("rtx 4070", title) == 0.0
+
+
+@pytest.mark.parametrize("title", [
+    "Gigabyte GeForce RTX 4070 Gaming OC 12G Graphics Card 3X WINDFORCE",
+    "GIGABYTE WINDFORCE GeForce RTX 4070 12GB GDDR6X PCIe 4.0 128-bit",
+    "MSI GeForce RTX 4070 VENTUS 2X E 12G OC",
+    "ASUS Dual GeForce RTX 4070 EVO OC Edition 12GB GDDR6X",
+])
+def test_ordinary_cards_are_untouched(title):
+    """Capacities, bus widths and fan counts must not read as extra models."""
+    assert relevance("rtx 4070", title) == 1.0
+
+
+def test_searching_for_a_system_still_finds_systems():
+    """The rule only fires when the query did not ask for a system."""
+    assert relevance("gaming pc rtx 4070", "MXZ Gaming PC RTX 4070 32GB") > 0.5
+
+
+def test_cpu_queries_are_unaffected():
+    assert relevance("ryzen 7 7800x3d", "AMD Ryzen 7 7800X3D 8-Core Processor") == 1.0
