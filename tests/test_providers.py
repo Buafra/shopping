@@ -558,3 +558,42 @@ def test_stores_without_an_override_use_the_default():
 
     for key in ("amazon_ae", "carrefour_ae", "ebay", "newegg"):
         assert STORES[key].http_timeout is None
+
+
+# ---- an unusable JSON blob must not shadow a readable DOM ----------------
+
+def test_aliexpress_falls_through_when_the_blob_parses_but_is_empty():
+    """AliExpress worked on one live run and failed the next with "fetched but
+    nothing parsed". The blob was present both times; only its key names had
+    changed. Returning empty on a parseable-but-unrecognised blob skipped the
+    DOM fallback that could read the page perfectly well."""
+    html = """<html><body>
+      <script>window._dida_config_._init_data_ = {"data":{"renamed":{"x":[{"id":1}]}}};</script>
+      <div class="search-item-card-wrapper-gallery">
+        <a href="/item/1005006123456789.html">
+          <h3>Sony WH-1000XM5 Wireless Noise Cancelling Headphones</h3>
+          <div><span>US $268.99</span></div></a></div>
+      </body></html>"""
+
+    offers = aliexpress()._parse(html, limit=6)
+    assert len(offers) == 1
+    assert offers[0].price == 268.99
+
+
+def test_noon_falls_through_when_next_data_holds_no_products():
+    html = """<html><body>
+      <script id="__NEXT_DATA__" type="application/json">
+        {"props":{"pageProps":{"unrelated":true}}}</script>
+      <a href="/uae-en/N123/p/">
+        <h2>Sony WH-1000XM5 Wireless Headphones</h2>
+        <div class="price"><strong>1,249</strong></div></a>
+      </body></html>"""
+
+    offers = noon()._parse(html, limit=6)
+    assert offers, "a readable DOM must not be skipped because a blob existed"
+
+
+def test_a_usable_blob_is_still_preferred():
+    """The blob carries ratings and review counts the DOM does not."""
+    offers = noon()._parse(load("noon_search.html"), limit=6)
+    assert any(o.review_count for o in offers)

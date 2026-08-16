@@ -101,7 +101,12 @@ class AliExpressProvider(Provider):
             if len(offers) >= limit * 2:
                 break
 
-        return offers
+        # A blob that parses but yields nothing is not the same as no blob.
+        # AliExpress renames its keys between releases, so the JSON can be
+        # present and unreadable — returning empty here made the store work on
+        # one run and fail the next with "fetched but nothing parsed", while
+        # the DOM was perfectly parseable the whole time.
+        return offers or self._parse_dom(self.dom(html), limit)
 
     def _parse_dom(self, tree, limit: int) -> list[Offer]:
         """DOM fallback for when the inline JSON blob is missing or renamed.

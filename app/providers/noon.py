@@ -121,7 +121,9 @@ class NoonProvider(Provider):
             if len(offers) >= limit * 2:
                 break
 
-        return offers
+        # Same reasoning as AliExpress: a __NEXT_DATA__ blob that parses but
+        # holds no recognisable products must still fall through to the DOM.
+        return offers or self._parse_dom(tree, limit)
 
     def _parse_dom(self, tree, limit: int) -> list[Offer]:
         """Fallback for when the JSON blob is missing or restructured."""
