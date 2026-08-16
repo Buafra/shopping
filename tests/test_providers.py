@@ -597,3 +597,27 @@ def test_a_usable_blob_is_still_preferred():
     """The blob carries ratings and review counts the DOM does not."""
     offers = noon()._parse(load("noon_search.html"), limit=6)
     assert any(o.review_count for o in offers)
+
+
+def test_ebay_falls_back_to_structure_when_its_classes_change():
+    """eBay rotates between .s-item and .s-card layouts. When neither matches,
+    structure beats reporting the store dead."""
+    html = """<html><body><ul>
+      <li class="brand-new-class"><a href="https://www.ebay.com/itm/295012345678">
+        <h3>Sony WH-1000XM5 Wireless Noise Cancelling Headphones</h3></a>
+        <span>US $298.00</span></li>
+      <li class="brand-new-class"><a href="https://www.ebay.com/itm/295099998888">
+        <h3>Sony WH-1000XM5 Headphones Silver Sealed</h3></a>
+        <span>US $319.99</span></li></ul></body></html>"""
+
+    offers = ebay()._parse(html, limit=6)
+    assert len(offers) == 2
+    assert offers[0].currency == "USD"
+    assert all("/itm/" in o.url for o in offers)
+
+
+def test_ebay_prefers_its_known_layout():
+    """The known layout carries stated shipping and delivery that structure
+    cannot infer, so it must win when it is present."""
+    offers = ebay()._parse(load("ebay_search.html"), limit=6)
+    assert any(o.shipping_is_estimate is False for o in offers)

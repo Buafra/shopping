@@ -13,6 +13,7 @@ from ..browser import render
 from ..config import STORES
 from ..models import Offer
 from ..net import clean_text, fetch, parse_int, parse_price, parse_rating
+from ..structural import parse_cards
 from .base import Provider
 
 ORIGIN = "https://www.ebay.com"
@@ -63,6 +64,29 @@ class EbayProvider(Provider):
         return self._parse(html, limit)
 
     def _parse(self, html: str, limit: int) -> list[Offer]:
+        offers = self._parse_cards(html, limit)
+        # eBay has been rotating between `.s-item` and `.s-card` layouts; when
+        # neither matches, fall back to structure rather than reporting the
+        # store dead. This is the same mechanism that recovered Carrefour.
+        return offers or self._parse_structural(html, limit)
+
+    def _parse_structural(self, html: str, limit: int) -> list[Offer]:
+        return [
+            self.make_offer(
+                title=card.title,
+                url=card.url,
+                image=card.image,
+                price=card.price,
+                currency=card.currency or self.spec.currency,
+                rating=card.rating,
+                review_count=card.review_count,
+            )
+            for card in parse_cards(
+                html, origin=ORIGIN, link_match="/itm/", max_cards=limit * 2
+            )
+        ]
+
+    def _parse_cards(self, html: str, limit: int) -> list[Offer]:
         tree = self.dom(html)
 
         cards = []
