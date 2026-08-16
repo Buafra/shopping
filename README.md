@@ -187,7 +187,7 @@ fix on its own:
 | **Amazon.ae** | works — 6 offers over plain HTTP in ~1s |
 | Noon UAE | connection refused at protocol level (`ERR_HTTP2_PROTOCOL_ERROR`); HTTP/1.1 fallback added, unverified |
 | Sharaf DG | serves a **CAPTCHA** to headless browsers; page loads with zero prices in it |
-| Carrefour UAE | search API retired (404), but the **search page returns 200 with prices** — now parsed structurally |
+| **Carrefour UAE** | works — 6 offers in ~2.5s by parsing the search page (its JSON API is retired) |
 
 Carrefour is recoverable: only its private API died, and the ordinary search
 page still serves products over plain HTTP. That page is built with
@@ -227,7 +227,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 161 tests
+python -m pytest -q      # 170 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in

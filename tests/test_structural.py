@@ -131,3 +131,53 @@ def test_link_match_scopes_the_search():
       <span data-testid="product_name">An article about headphones</span></a>
       <span data-testid="product_price">AED 1,299.00</span></div>"""
     assert parse_cards(html, origin=ORIGIN, link_match="/item/") == []
+
+
+# ---- price is the number the shopper pays, not the nearest number ---------
+
+def card(price_block: str) -> str:
+    return f"""<div><a href="/mafuae/en/sony/p/1">
+      <span>Sony WH-1000XM5 Headphones</span></a>{price_block}</div>"""
+
+
+@pytest.mark.parametrize("label,block,expected", [
+    ("plain price", '<span>AED 1,279.00</span>', 1279.00),
+    ("was + now",
+     '<span>Was AED 1,299.00</span><span>Now AED 845.00</span>', 845.00),
+    ("struck-through original",
+     '<span class="line-through">AED 1,299.00</span><span>AED 845.00</span>', 845.00),
+    ("save badge before the price",
+     '<span>Save AED 454.00</span><span>AED 845.00</span>', 845.00),
+    ("amount-off badge before the price",
+     '<span>AED 200.00 off</span><span>AED 999.00</span>', 999.00),
+    ("percent-off badge before the price",
+     '<span>25% OFF</span><span>AED 999.00</span>', 999.00),
+    ("the full Carrefour spread",
+     '<span class="line-through">AED 1,299.00</span><span>AED 845.00</span>'
+     '<span>Save AED 454.00</span>'
+     '<span>or AED 70.42/month for 12 months</span>', 845.00),
+])
+def test_price_ignores_savings_and_instalments(label, block, expected):
+    """A monthly instalment is the smallest number on the card. Taking it
+    would put AED 70.42 into the ranking instead of AED 845 and win."""
+    cards = parse_cards(card(block), origin=ORIGIN, link_match="/p/")
+    assert cards, f"{label}: nothing parsed"
+    assert cards[0].price == expected, label
+
+
+def test_a_card_with_only_an_instalment_yields_no_price():
+    """Better to report nothing than to publish a per-month figure as a price."""
+    cards = parse_cards(card('<span>AED 70.42 per month</span>'),
+                        origin=ORIGIN, link_match="/p/")
+    assert cards == []
+
+
+def test_adjacent_elements_do_not_fuse():
+    """selectolax joins children with no separator, so '...off' + 'AED 999'
+    reads as 'offAED 999' and every word-boundary rule silently fails."""
+    from selectolax.parser import HTMLParser
+
+    from app.structural import node_text
+
+    node = HTMLParser("<div><span>off</span><span>AED 999.00</span></div>").css_first("div")
+    assert node_text(node) == "off AED 999.00"

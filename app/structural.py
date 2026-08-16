@@ -29,6 +29,23 @@ PRICE_TEXT = re.compile(
     re.I,
 )
 RATING_TEXT = re.compile(r"\b([0-5](?:[.,]\d)?)\s*(?:/\s*5|out of 5|\()", re.I)
+
+# A number is not the selling price when it is introduced as a discount or an
+# old price...
+# Note "off" is deliberately absent here: it trails a discount ("AED 200 off")
+# but leads a real price ("25% OFF  AED 999.00"), so it belongs below.
+NOT_A_PRICE_BEFORE = re.compile(
+    r"(save|saving|you save|discount of|was|before|instead of|rrp|"
+    r"list price|reduced from|worth)\W{0,4}$",
+    re.I,
+)
+# ...or when it is quoted per month as an instalment, or is itself the discount.
+NOT_A_PRICE_AFTER = re.compile(
+    r"\W{0,3}(?:/|per\s+)?\s*(?:month|mo\b|year|installment|instalment)|"
+    r"\W{0,3}x\s*\d+\s*(?:month|payment)|"
+    r"\W{0,3}off\b",
+    re.I,
+)
 REVIEWS_TEXT = re.compile(r"\(\s*([\d,.]+)\s*\)|\b([\d,.]+)\s*(?:ratings?|reviews?)", re.I)
 
 # Text that is never a product title.
@@ -49,6 +66,17 @@ class Card:
     review_count: int | None = None
 
 
+def node_text(node) -> str:
+    """Text of an element with a space between child elements.
+
+    selectolax concatenates children with no separator, so
+    `<span>...off</span><span>AED 999</span>` reads as "offAED 999" — the
+    tokens fuse, word boundaries vanish, and both the price-context rules and
+    the title checks silently misfire. Always read text through here.
+    """
+    return clean_text(node.text(separator=" "))
+
+
 def _ancestors(node, limit: int):
     current = node.parent
     for _ in range(limit):
@@ -66,12 +94,12 @@ def _title_from(container, link) -> str:
     ):
         node = container.css_first(selector)
         if node:
-            text = clean_text(node.text())
+            text = node_text(node)
             if len(text) > 8 and not JUNK_TITLE.match(text):
                 return text
 
     # The link's own text, if it reads like a name rather than a call to action.
-    text = clean_text(link.text())
+    text = node_text(link)
     if len(text) > 8 and not JUNK_TITLE.match(text):
         return text
 
@@ -90,20 +118,36 @@ def _title_from(container, link) -> str:
 
 
 def _price_from(container) -> float | None:
-    """The lowest plausible price in the card.
+    """What the shopper actually pays for this item.
 
-    Cards often show a struck-through original next to the current price;
-    taking the lowest matches what the shopper actually pays.
+    Cards are littered with numbers that are not the price: a struck-through
+    original, a "Save AED 454" badge, and a monthly instalment figure. Taking
+    the smallest number picks the instalment — on a real Carrefour card,
+    AED 70.42/month instead of AED 845 — which is not a small error, it is a
+    wrong answer that then wins the ranking.
+
+    So candidates whose surrounding text marks them as a saving, an old price
+    or an instalment are discarded first; of what remains, the lowest is the
+    current price (the other survivor is usually the struck-through original).
     """
     for selector in ("[data-testid*='price']", "[data-qa*='price']", "[itemprop='price']"):
         node = container.css_first(selector)
         if node:
-            value = parse_price(clean_text(node.text()))
+            value = parse_price(node_text(node))
             if value:
                 return value
 
-    found = [parse_price(m) for m in PRICE_TEXT.findall(clean_text(container.text()))]
-    values = [v for v in found if v and v > 0]
+    text = node_text(container)
+    values: list[float] = []
+    for match in PRICE_TEXT.finditer(text):
+        before = text[max(0, match.start() - 26):match.start()]
+        after = text[match.end():match.end() + 20]
+        if NOT_A_PRICE_BEFORE.search(before) or NOT_A_PRICE_AFTER.match(after):
+            continue
+        value = parse_price(match.group(0))
+        if value and value > 0:
+            values.append(value)
+
     return min(values) if values else None
 
 
@@ -123,7 +167,7 @@ def _rating_from(container) -> tuple[float | None, int | None]:
                      "[itemprop='ratingValue']", "[class*='rating']"):
         node = container.css_first(selector)
         if node:
-            text = clean_text(node.text())
+            text = node_text(node)
             match = RATING_TEXT.search(text)
             rating = parse_rating(match.group(1)) if match else parse_rating(text)
             reviews = REVIEWS_TEXT.search(text)
@@ -167,7 +211,7 @@ def parse_cards(
         # missing ones, so those are skipped.
         container = None
         for ancestor in _ancestors(link, 6):
-            text = clean_text(ancestor.text())
+            text = node_text(ancestor)
             if len(text) > max_card_chars:
                 break
             if not PRICE_TEXT.search(text):
