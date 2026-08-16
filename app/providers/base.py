@@ -83,14 +83,15 @@ class Provider(abc.ABC):
         fetch_succeeded = False
         offers: list[Offer] = []
 
+        http_budget = self.spec.http_timeout or SETTINGS.http_phase_timeout
         try:
             offers = await asyncio.wait_for(
-                self.search_http(query, limit), SETTINGS.http_phase_timeout
+                self.search_http(query, limit), http_budget
             )
             fetch_succeeded = True
         except asyncio.TimeoutError:
             error, error_kind = (
-                f"no HTTP response within {SETTINGS.http_phase_timeout:.0f}s",
+                f"no HTTP response within {http_budget:.0f}s",
                 "timeout",
             )
             log.info("%s http path timed out", self.spec.key)

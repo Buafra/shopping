@@ -212,7 +212,7 @@ fix on its own:
 | Amazon.com | works |
 | AliExpress | now parsed structurally; previously "fetched but nothing parsed" |
 | eBay | answered 403 to a cold search; session priming added |
-| Noon UAE | no response at all within 20s, and the browser navigation is aborted — blocking at connection level, not by status code |
+| Noon UAE | no response at all, and the browser navigation is aborted — blocking at connection level, not by status code. Given a short 8s leash so it cannot dominate a search; disable it or use `SCRAPER_PROXY` |
 | Sharaf DG | serves a **CAPTCHA** to headless browsers; page loads with zero prices in it |
 | **Carrefour UAE** | works — 6 offers in ~2.5s by parsing the search page (its JSON API is retired) |
 
@@ -259,7 +259,9 @@ python diagnose.py sharaf_dg              # one store
 python diagnose.py --all --query "airfryer"
 ```
 
-It runs the HTTP and browser paths separately and reports the page title, any
+It uses short timeouts (8s, no retries — override with `--timeout`) so a
+blocked store reports quickly instead of stalling the run. It runs the HTTP
+and browser paths separately and reports the page title, any
 bot-wall markers, whether the page ships `__NEXT_DATA__` or JSON-LD, how many
 elements each current selector still matches, how many offers parse out, and
 which repeated CSS classes look like product cards. Raw HTML is written to
@@ -268,7 +270,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 200 tests
+python -m pytest -q      # 203 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in

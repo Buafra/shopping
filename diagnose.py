@@ -17,10 +17,20 @@ from __future__ import annotations
 import argparse
 import asyncio
 import collections
+import os
 import pathlib
 import re
-from urllib.parse import urlsplit
 import sys
+from urllib.parse import urlsplit
+
+# A diagnostic is a probe, not a search. Inheriting the normal 20s timeout
+# plus retries means a blocked store stalls the whole run for the best part
+# of a minute before printing anything — long enough that you kill it before
+# it tells you what is wrong. Must be set before app.config is imported.
+os.environ.setdefault("REQUEST_TIMEOUT", "8")
+os.environ.setdefault("MAX_RETRIES", "0")
+os.environ.setdefault("BROWSER_TIMEOUT", "15")
+os.environ.setdefault("BROWSER_PHASE_TIMEOUT", "20")
 
 from selectolax.parser import HTMLParser
 
@@ -347,7 +357,11 @@ async def main() -> int:
     parser.add_argument("--query", default="sony wh-1000xm5")
     parser.add_argument("--no-save", action="store_true", help="do not write captures/")
     parser.add_argument("--url", help="probe any search URL, without a provider")
+    parser.add_argument("--timeout", type=float, default=8.0,
+                        help="per-request timeout in seconds (default 8)")
     args = parser.parse_args()
+
+    os.environ["REQUEST_TIMEOUT"] = str(args.timeout)
 
     if args.url:
         try:

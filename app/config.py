@@ -78,6 +78,11 @@ class StoreSpec:
     enabled: bool = True
     # Global stores charge import duty/VAT on arrival into the UAE.
     incurs_import_fees: bool = False
+    # Optional per-store cap on the HTTP phase. A store that reliably hangs
+    # rather than refusing costs the full budget on every search — Noon held
+    # up a 55-second run single-handedly — so it gets a shorter leash than
+    # stores that answer promptly or fail fast.
+    http_timeout: float | None = None
 
 
 STORES: dict[str, StoreSpec] = {
@@ -89,6 +94,9 @@ STORES: dict[str, StoreSpec] = {
     "noon": StoreSpec(
         key="noon", label="Noon UAE", market=Market.LOCAL, country="AE",
         currency="AED", trust=0.92, default_delivery_days=2, default_shipping=0.0,
+        # Noon does not refuse — it simply never answers, so the timeout is the
+        # only thing that ends the attempt. Keep it short.
+        http_timeout=8.0,
     ),
     "sharaf_dg": StoreSpec(
         key="sharaf_dg", label="Sharaf DG", market=Market.LOCAL, country="AE",

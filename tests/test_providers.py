@@ -507,3 +507,54 @@ def test_ebay_search_proceeds_even_if_priming_fails(monkeypatch):
 
     monkeypatch.setattr(module, "fetch", fake_fetch)
     assert asyncio.run(module.make().search_http("sony wh-1000xm5", 5))
+
+
+# ---- a store that hangs must not dominate the search ---------------------
+
+def test_noon_has_a_shortened_http_budget():
+    """Noon never refuses — it simply does not answer — so only the timeout
+    ends the attempt. On a live run it consumed 55s of a 55s search alone."""
+    from app.config import SETTINGS, STORES
+
+    assert STORES["noon"].http_timeout is not None
+    assert STORES["noon"].http_timeout < SETTINGS.http_phase_timeout
+
+
+def test_per_store_timeout_is_honoured(monkeypatch):
+    """The override must actually shorten the wait, not merely be recorded.
+
+    Uses a 1s override so the test proves the mechanism without spending the
+    real 8s budget waiting for a store that will never answer.
+    """
+    import asyncio
+    import time
+    from dataclasses import replace
+
+    from app.config import STORES
+    from app.providers.noon import NoonProvider
+
+    provider = NoonProvider(replace(STORES["noon"], http_timeout=1.0))
+
+    async def never_answers(self, query, limit):
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(NoonProvider, "search_http", never_answers)
+    monkeypatch.setattr(NoonProvider, "search_browser", never_answers)
+
+    async def run():
+        started = time.perf_counter()
+        _, status = await provider.run("anything", 3)
+        return time.perf_counter() - started, status
+
+    elapsed, status = asyncio.run(run())
+
+    assert status.error_kind == "timeout"
+    assert elapsed < 4, f"took {elapsed:.1f}s; the per-store budget was ignored"
+    assert "1s" in (status.error or ""), status.error
+
+
+def test_stores_without_an_override_use_the_default():
+    from app.config import STORES
+
+    for key in ("amazon_ae", "carrefour_ae", "ebay", "newegg"):
+        assert STORES[key].http_timeout is None
