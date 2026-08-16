@@ -142,6 +142,8 @@ async def main() -> int:
     parser.add_argument("--stores", help="comma-separated store keys to limit the search")
     parser.add_argument("--limit", type=int, default=6, help="results per store")
     parser.add_argument("--json", action="store_true", help="emit raw JSON instead of a table")
+    parser.add_argument("--include-used", action="store_true",
+                        help="include refurbished/renewed/used listings")
     args = parser.parse_args()
 
     markets = None
@@ -156,6 +158,7 @@ async def main() -> int:
             markets=markets,
             stores=args.stores.split(",") if args.stores else None,
             limit_per_store=args.limit,
+            include_used=args.include_used,
         )
         if args.json:
             print(json.dumps(response.model_dump(mode="json"), indent=2, ensure_ascii=False))

@@ -100,6 +100,7 @@ async def search(
     stores: list[str] | None = None,
     limit_per_store: int | None = None,
     max_results: int = 40,
+    include_used: bool = False,
 ) -> SearchResponse:
     query = (query or "").strip()
     if not query:
@@ -139,14 +140,20 @@ async def search(
 
     pricing.normalise_offers(all_offers, rates)
 
-    relevant, dropped = matching.filter_relevant(all_offers, query)
-    if dropped:
+    result = matching.filter_relevant(all_offers, query, include_used=include_used)
+    if result.dropped_used:
         notes.append(
-            f"Filtered out {dropped} listing(s) that looked like accessories or "
-            f"mismatches rather than the product searched for."
+            f"Hid {result.dropped_used} refurbished/used listing(s) — they undercut "
+            f"new stock on price without being the same purchase. "
+            f"Pass include_used=true to see them."
+        )
+    if result.dropped_mismatch:
+        notes.append(
+            f"Filtered out {result.dropped_mismatch} listing(s) that looked like "
+            f"accessories or a different model rather than the product searched for."
         )
 
-    ranked = scoring.rank(relevant)[:max_results]
+    ranked = scoring.rank(result.offers)[:max_results]
     recommendation = scoring.build_recommendation(ranked)
 
     failed = [s for s in statuses if not s.ok]

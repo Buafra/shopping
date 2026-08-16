@@ -14,6 +14,8 @@ from __future__ import annotations
 import re
 import statistics
 
+from dataclasses import dataclass
+
 from .models import Offer
 
 # Words that almost always mean "an add-on for the thing", not the thing.
@@ -25,6 +27,15 @@ ACCESSORY_TERMS = {
     "compatible with", "accessory", "accessories",
 }
 
+# A refurbished unit is not the same purchase as a new one — different
+# warranty, different condition — so it must not undercut new listings on
+# price unless the shopper asked for it.
+USED_TERMS = {
+    "renewed", "refurbished", "refurb", "pre-owned", "preowned", "used",
+    "open box", "openbox", "second hand", "secondhand", "like new",
+    "certified refurbished",
+}
+
 # Query words that are noise for matching purposes.
 STOPWORDS = {
     "the", "a", "an", "and", "or", "with", "for", "new", "best", "buy",
@@ -34,16 +45,63 @@ STOPWORDS = {
 _TOKEN = re.compile(r"[a-z0-9]+")
 _MODEL_TOKEN = re.compile(r"^(?:[a-z]+\d+[a-z0-9]*|\d+[a-z]+[a-z0-9]*|\d{3,})$")
 
+# A short letter prefix separated from a model number is one identifier written
+# loosely: "WH-1000XM5", "WH 1000XM5" and "WH1000XM5" are the same product.
+# Splitting on the separator turns the prefix into a throwaway token, and then
+# WF-1000XM5 — a completely different product — matches a WH-1000XM5 query on
+# everything except one letter.
+_MODEL_JOIN = re.compile(r"\b([a-z]{1,4})[\s\-_/]+(\d{2,}[a-z0-9]*)")
+
+# Short words that routinely sit in front of a number while describing it
+# rather than naming a model. Without this, "iPhone 15 Pro 256GB" collapses
+# to "pro256gb" and loses both the variant and the capacity.
+NOT_MODEL_PREFIXES = {
+    "pro", "max", "plus", "air", "mini", "lite", "ultra", "gen", "size",
+    "set", "pack", "kit", "box", "new", "top", "all", "up", "to", "of",
+    "cm", "mm", "inch", "in", "ml", "l", "kg", "g", "w", "v", "hz", "gb",
+    "tb", "mb", "ah", "mah", "k", "hd", "fhd", "uhd", "led", "lcd",
+}
+
+
+def _join_model(match: re.Match) -> str:
+    prefix, number = match.group(1), match.group(2)
+    if prefix in NOT_MODEL_PREFIXES:
+        return match.group(0)
+    return prefix + number
+
+
+def normalise_models(text: str) -> str:
+    """Glue loosely-written model numbers into single tokens.
+
+    "WH-1000XM5", "WH 1000XM5" and "WH1000XM5" all become `wh1000xm5`, so a
+    one-letter difference like WF-1000XM5 no longer looks like a near match.
+    """
+    lowered = (text or "").lower()
+    previous = None
+    while previous != lowered:
+        previous = lowered
+        lowered = _MODEL_JOIN.sub(_join_model, lowered)
+    return lowered
+
 
 def tokenise(text: str) -> list[str]:
-    return [t for t in _TOKEN.findall((text or "").lower()) if t not in STOPWORDS]
+    return [
+        t for t in _TOKEN.findall(normalise_models(text)) if t not in STOPWORDS
+    ]
+
+
+def model_tokens(text: str) -> set[str]:
+    """The tokens that identify *which* product this is, not what kind."""
+    return {t for t in tokenise(text) if _MODEL_TOKEN.match(t)}
 
 
 def relevance(query: str, title: str) -> float:
     """0..1 — how well a listing title answers the query.
 
-    Model-number-ish tokens ("15", "pro", "m3", "rtx4070") count double: they
-    are what distinguishes the product the shopper actually asked for.
+    Model-number-ish tokens ("15", "m3", "rtx4070") count double: they are what
+    distinguishes the product the shopper actually asked for. A query model
+    number that is absent from the title scores 0 outright — that is not a
+    weaker match, it is a different item.
     """
     q_tokens = tokenise(query)
     if not q_tokens:
@@ -51,6 +109,11 @@ def relevance(query: str, title: str) -> float:
 
     t_tokens = set(tokenise(title))
     if not t_tokens:
+        return 0.0
+
+    # Model numbers are identity, not description.
+    wanted_models = model_tokens(query)
+    if wanted_models and not wanted_models.issubset(t_tokens):
         return 0.0
 
     total = 0.0
@@ -64,6 +127,15 @@ def relevance(query: str, title: str) -> float:
     return matched / total if total else 0.0
 
 
+def looks_used(query: str, title: str) -> bool:
+    """True when the listing is refurbished/used and the query did not ask."""
+    title_l = (title or "").lower()
+    query_l = (query or "").lower()
+    return any(
+        term in title_l and term not in query_l for term in USED_TERMS
+    )
+
+
 def looks_like_accessory(query: str, title: str) -> bool:
     """True when the title advertises an add-on the query did not ask for."""
     title_l = (title or "").lower()
@@ -75,20 +147,37 @@ def looks_like_accessory(query: str, title: str) -> bool:
     return False
 
 
+@dataclass
+class FilterResult:
+    offers: list[Offer]
+    dropped_mismatch: int = 0
+    dropped_used: int = 0
+
+
 def filter_relevant(
     offers: list[Offer],
     query: str,
     *,
     min_relevance: float = 0.5,
     price_floor_ratio: float = 0.25,
-) -> tuple[list[Offer], int]:
-    """Return (kept_offers, dropped_count).
+    include_used: bool = False,
+) -> FilterResult:
+    """Keep only listings that are plausibly the product the shopper asked for.
 
-    Two passes: a text pass, then a price-outlier pass anchored on the median
-    of whatever survived the text pass.
+    Three passes: drop wrong products and accessories, drop refurbished units
+    unless requested, then drop price outliers relative to the median of what
+    survived.
     """
     if not offers:
-        return [], 0
+        return FilterResult([])
+
+    used_count = 0
+    if not include_used:
+        fresh = [o for o in offers if not looks_used(query, o.title)]
+        used_count = len(offers) - len(fresh)
+        offers = fresh or offers        # never leave the shopper with nothing
+        if not fresh:
+            used_count = 0
 
     scored = [(o, relevance(query, o.title)) for o in offers]
     kept = [
@@ -102,7 +191,7 @@ def filter_relevant(
         kept = [o for o, score in scored if score >= min_relevance * 0.6]
     if len(kept) < 2:
         kept = [o for o, _ in scored]
-        return kept, len(offers) - len(kept)
+        return FilterResult(kept, len(offers) - len(kept), used_count)
 
     prices = [o.landed_aed or o.price_aed or o.price for o in kept]
     median = statistics.median(prices)
@@ -115,4 +204,4 @@ def filter_relevant(
     if len(final) < 2:
         final = kept
 
-    return final, len(offers) - len(final)
+    return FilterResult(final, len(offers) - len(final), used_count)

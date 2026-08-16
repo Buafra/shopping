@@ -3,8 +3,8 @@ recommending a AED 19 phone case as the best deal."""
 
 import pytest
 
-from app.matching import (filter_relevant, looks_like_accessory, relevance,
-                          tokenise)
+from app.matching import (filter_relevant, looks_like_accessory, looks_used,
+                          model_tokens, relevance, tokenise)
 from app.models import Market, Offer
 
 
@@ -26,8 +26,14 @@ def test_relevance_full_match():
 
 
 def test_relevance_partial():
-    score = relevance("sony wh-1000xm5 headphones", "Sony Headphones")
+    """A title missing a non-model word is a weaker match, not a rejection."""
+    score = relevance("sony wireless headphones", "Sony Headphones")
     assert 0 < score < 1
+
+
+def test_a_title_missing_the_model_number_is_rejected_outright():
+    """"Sony Headphones" is not a WH-1000XM5 — no partial credit."""
+    assert relevance("sony wh-1000xm5 headphones", "Sony Headphones") == 0.0
 
 
 def test_relevance_weights_model_numbers():
@@ -71,9 +77,9 @@ def test_filter_removes_accessories():
         make("Silicone Case for iPhone 15 Pro", 49),
         make("Screen Protector for iPhone 15 Pro", 25),
     ]
-    kept, dropped = filter_relevant(offers, "iphone 15 pro")
-    titles = [o.title for o in kept]
-    assert dropped == 2
+    result = filter_relevant(offers, "iphone 15 pro")
+    titles = [o.title for o in result.offers]
+    assert result.dropped_mismatch == 2
     assert all("Case" not in t and "Protector" not in t for t in titles)
 
 
@@ -85,16 +91,112 @@ def test_filter_drops_price_outliers():
         make("Sony WH-1000XM5 Wireless Silver", 1350),
         make("Sony WH-1000XM5 Wireless replacement earpads", 39),
     ]
-    kept, _ = filter_relevant(offers, "sony wh-1000xm5 wireless")
-    assert all(o.price >= 1000 for o in kept)
+    result = filter_relevant(offers, "sony wh-1000xm5 wireless")
+    assert all(o.price >= 1000 for o in result.offers)
 
 
 def test_filter_relaxes_rather_than_returning_nothing():
     """An unusual query must not produce an empty comparison."""
     offers = [make("Generic Item A", 100), make("Generic Item B", 120)]
-    kept, _ = filter_relevant(offers, "some very specific unmatched query xyz")
-    assert len(kept) == 2
+    result = filter_relevant(offers, "some very specific unmatched query xyz")
+    assert len(result.offers) == 2
 
 
 def test_filter_handles_empty():
-    assert filter_relevant([], "anything") == ([], 0)
+    empty = filter_relevant([], "anything")
+    assert empty.offers == [] and empty.dropped_mismatch == 0
+
+
+
+# ---- model numbers are identity ------------------------------------------
+
+def test_a_different_model_prefix_is_a_different_product():
+    """WF-1000XM5 (earbuds) must never answer a WH-1000XM5 (over-ear) query.
+    It once did: the hyphen split the prefix off, leaving a 0.75 match that
+    sailed past the threshold and — being cheaper — won the recommendation."""
+    assert relevance("sony wh-1000xm5", "Sony (Renewed) WF-1000XM5 Earbuds") == 0.0
+
+
+def test_a_different_model_generation_is_a_different_product():
+    assert relevance("sony wh-1000xm5", "Sony WH-1000XM4 Wireless Headphones") == 0.0
+
+
+@pytest.mark.parametrize("title", [
+    "Sony WH-1000XM5 Wireless Over-Ear Headphones",
+    "Sony WH 1000XM5 Noise Cancelling Headphones",
+    "Sony WH1000XM5 Black",
+    "SONY WH_1000XM5 Headset",
+])
+def test_the_same_model_written_loosely_still_matches(title):
+    assert relevance("sony wh-1000xm5", title) == 1.0
+
+
+def test_model_tokens_are_extracted_from_loose_spellings():
+    assert model_tokens("sony wh-1000xm5") == {"wh1000xm5"}
+    assert model_tokens("sony wh 1000xm5") == {"wh1000xm5"}
+    assert model_tokens("airfryer") == set()
+
+
+def test_queries_without_a_model_still_match_loosely():
+    """The strict rule must not break ordinary shopping queries."""
+    assert relevance("air fryer", "Philips Digital Air Fryer 4.1L") > 0.5
+
+
+# ---- refurbished stock is not the same purchase --------------------------
+
+@pytest.mark.parametrize("title", [
+    "Sony (Renewed) WH-1000XM5",
+    "Sony WH-1000XM5 Refurbished",
+    "Sony WH-1000XM5 - Open Box",
+    "Sony WH-1000XM5 Pre-Owned",
+])
+def test_used_listings_detected(title):
+    assert looks_used("sony wh-1000xm5", title)
+
+
+def test_used_allowed_when_explicitly_requested():
+    assert not looks_used("renewed sony wh-1000xm5", "Sony (Renewed) WH-1000XM5")
+
+
+def test_new_listing_not_flagged_as_used():
+    assert not looks_used("sony wh-1000xm5", "Sony WH-1000XM5 Wireless Headphones")
+
+
+def _offer(title, price):
+    return Offer(
+        store="amazon_ae", store_label="Amazon.ae", market=Market.LOCAL, country="AE",
+        title=title, url=f"https://example.com/{abs(hash(title))}",
+        price=price, currency="AED", price_aed=price, landed_aed=price,
+    )
+
+
+def test_refurbished_units_are_hidden_by_default():
+    """A renewed unit undercuts new stock on price without being the same buy."""
+    offers = [
+        _offer("Sony WH-1000XM5 Wireless Headphones", 1299),
+        _offer("Sony WH-1000XM5 Headphones Black", 1249),
+        _offer("Sony (Renewed) WH-1000XM5", 700),
+    ]
+    result = filter_relevant(offers, "sony wh-1000xm5")
+    assert result.dropped_used == 1
+    assert all("Renewed" not in o.title for o in result.offers)
+
+
+def test_refurbished_units_shown_on_request():
+    offers = [
+        _offer("Sony WH-1000XM5 Wireless Headphones", 1299),
+        _offer("Sony (Renewed) WH-1000XM5", 700),
+    ]
+    result = filter_relevant(offers, "sony wh-1000xm5", include_used=True)
+    assert len(result.offers) == 2
+    assert result.dropped_used == 0
+
+
+def test_all_refurbished_still_returns_something():
+    """If every listing is refurbished, showing them beats showing nothing."""
+    offers = [
+        _offer("Sony (Renewed) WH-1000XM5", 700),
+        _offer("Sony WH-1000XM5 Refurbished", 720),
+    ]
+    result = filter_relevant(offers, "sony wh-1000xm5")
+    assert len(result.offers) == 2

@@ -55,6 +55,7 @@ async def api_search(
     stores: str | None = Query(None, description="Comma-separated store keys"),
     limit_per_store: int = Query(SETTINGS.per_store_results, ge=1, le=20),
     max_results: int = Query(40, ge=1, le=100),
+    include_used: bool = Query(False, description="Include refurbished/used listings"),
 ) -> SearchResponse:
     markets = None
     if market == "local":
@@ -71,6 +72,7 @@ async def api_search(
             stores=store_list,
             limit_per_store=limit_per_store,
             max_results=max_results,
+            include_used=include_used,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -61,6 +61,21 @@ Each offer scores 0–100 on five weighted components (`app/scoring.py`):
 | Delivery | 12% | days to your door |
 | Seller trust | 8% | returns, warranty, dispute history |
 
+Before anything is scored, listings that are not the product you asked for are
+removed:
+
+- **A model number is identity, not description.** A title missing the model
+  you searched for scores zero, not partial credit. `WH-1000XM5` and
+  `WF-1000XM5` differ by one letter and are different products (over-ear
+  headphones vs earbuds); `WH-1000XM4` is a different generation. Loose
+  spellings still match, so `WH-1000XM5`, `WH 1000XM5` and `WH1000XM5` are one
+  product.
+- **Refurbished stock is hidden by default.** A renewed unit undercuts new
+  stock on price without being the same purchase — different condition,
+  different warranty. Pass `--include-used` (CLI) or `include_used=true` (API)
+  to see them.
+- **Accessories are dropped.** Otherwise a AED 19 case wins a phone search.
+
 Two deliberate judgement calls:
 
 - **A 5.0 from two reviewers loses to a 4.6 from eight thousand.** Ratings are
@@ -139,6 +154,8 @@ All optional, all environment variables:
 | `UAE_VAT_RATE` / `UAE_CUSTOMS_RATE` | `0.05` | landed-cost assumptions |
 | `UAE_DUTY_FREE_THRESHOLD_AED` | `300` | de-minimis |
 | `W_PRICE`, `W_RATING`, `W_REVIEWS`, `W_DELIVERY`, `W_TRUST` | see above | must sum to 1.0 |
+
+`GET /api/search` also takes `include_used=true` to show refurbished listings.
 
 ## What can go wrong (read this)
 
@@ -227,7 +244,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 170 tests
+python -m pytest -q      # 188 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in
