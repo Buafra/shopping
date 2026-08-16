@@ -119,26 +119,44 @@ def summarise(html: str, provider, label: str) -> None:
               "(page is probably a bot wall or fully client-rendered)")
 
 
+def search_url_for(provider, query: str) -> str | None:
+    """The human-facing search page for this provider.
+
+    Providers that talk to a JSON API expose `_page_url` instead of `_url`;
+    missing that distinction meant the browser path was silently never probed
+    for exactly the stores whose API had stopped working.
+    """
+    for attr in ("_url", "_page_url"):
+        builder = getattr(provider, attr, None)
+        if callable(builder):
+            return builder(query)
+    return None
+
+
 async def run_store(key: str, query: str, save: bool) -> None:
     spec = STORES[key]
     provider = build(key)
     print(f"\n{'=' * 72}\n{spec.label}  ({key})\n{'=' * 72}")
 
-    url = provider._url(query) if hasattr(provider, "_url") else "(custom endpoint)"
-    print(f"  search URL: {url}")
+    url = search_url_for(provider, query)
+    print(f"  search page: {url or '(none exposed)'}")
 
     # -- HTTP path
     html = ""
     try:
-        if hasattr(provider, "_url"):
-            resp = await net.fetch(provider._url(query))
-            html = resp.text
-            print(f"  HTTP status: {resp.status_code}")
-        else:
-            offers = await provider.search_http(query, 6)
-            print(f"  HTTP (JSON endpoint) returned {len(offers)} offers")
+        offers = await provider.search_http(query, 6)
+        print(f"  provider search_http: {len(offers)} offers")
     except Exception as exc:
-        print(f"  HTTP failed: {type(exc).__name__}: {exc}")
+        print(f"  provider search_http failed: {type(exc).__name__}: {exc}")
+
+    if url:
+        try:
+            resp = await net.fetch(url)
+            html = resp.text
+            print(f"  search page HTTP {resp.status_code}, "
+                  f"http_version={resp.http_version}")
+        except Exception as exc:
+            print(f"  search page fetch failed: {type(exc).__name__}: {exc}")
 
     if html:
         summarise(html, provider, "HTTP response")
@@ -149,7 +167,7 @@ async def run_store(key: str, query: str, save: bool) -> None:
 
     # -- browser path
     try:
-        rendered = await browser.render(provider._url(query)) if hasattr(provider, "_url") else ""
+        rendered = await browser.render(url) if url else ""
     except Exception as exc:
         rendered = ""
         print(f"\n  browser failed: {type(exc).__name__}: "
@@ -163,6 +181,31 @@ async def run_store(key: str, query: str, save: bool) -> None:
             print(f"    saved -> {path}")
 
 
+async def probe_url(url: str) -> None:
+    """Check whether an arbitrary store search page is scrapeable at all.
+
+    Useful for vetting a replacement store before writing a provider for it.
+    """
+    print(f"\n{'=' * 72}\nProbing {url}\n{'=' * 72}")
+
+    class _Bare:
+        """Stand-in so summarise() can run without a real provider."""
+
+    for label, getter in (
+        ("HTTP response", lambda: net.fetch(url)),
+        ("browser-rendered DOM", lambda: browser.render(url)),
+    ):
+        try:
+            result = await getter()
+            html = result.text if hasattr(result, "text") else result
+            if hasattr(result, "status_code"):
+                print(f"  HTTP {result.status_code}, http_version={result.http_version}")
+            summarise(html, _Bare(), label)
+        except Exception as exc:
+            print(f"  {label} failed: {type(exc).__name__}: "
+                  f"{str(exc).splitlines()[0][:110]}")
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -170,7 +213,16 @@ async def main() -> int:
     parser.add_argument("--all", action="store_true", help="every configured store")
     parser.add_argument("--query", default="sony wh-1000xm5")
     parser.add_argument("--no-save", action="store_true", help="do not write captures/")
+    parser.add_argument("--url", help="probe any search URL, without a provider")
     args = parser.parse_args()
+
+    if args.url:
+        try:
+            await probe_url(args.url)
+        finally:
+            await net.close_client()
+            await browser.close_browser()
+        return 0
 
     keys = list(STORES) if args.all else args.stores
     if not keys:

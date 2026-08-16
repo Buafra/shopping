@@ -285,3 +285,41 @@ async def test_parse_failure_is_reported_as_such(monkeypatch):
     status = result.stores[0]
     assert status.error_kind == "parse"
     assert "markup" in (status.error or "")
+
+
+# ------------------------------------------------------- store enable/disable
+
+def test_disabled_stores_env_is_validated_and_applied(monkeypatch):
+    """A CAPTCHA-walled store must be switchable off without editing code,
+    and a typo must fail loudly rather than silently disabling nothing."""
+    import importlib
+
+    import app.config as config_module
+
+    monkeypatch.setenv("DISABLED_STORES", "sharaf_dg, carrefour_ae")
+    reloaded = importlib.reload(config_module)
+    try:
+        assert reloaded.STORES["sharaf_dg"].enabled is False
+        assert reloaded.STORES["carrefour_ae"].enabled is False
+        assert reloaded.STORES["amazon_ae"].enabled is True
+
+        monkeypatch.setenv("DISABLED_STORES", "not_a_store")
+        with pytest.raises(ValueError, match="unknown store"):
+            importlib.reload(config_module)
+    finally:
+        monkeypatch.delenv("DISABLED_STORES", raising=False)
+        importlib.reload(config_module)
+
+
+def test_store_deadline_covers_both_phases():
+    """The per-store deadline must never be shorter than the phases it holds,
+    or the browser fallback is killed before it starts."""
+    import importlib
+
+    import app.aggregator as agg
+    from app.config import SETTINGS
+
+    importlib.reload(agg)
+    assert agg.STORE_DEADLINE >= (
+        SETTINGS.http_phase_timeout + SETTINGS.browser_phase_timeout
+    )

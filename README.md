@@ -128,8 +128,9 @@ All optional, all environment variables:
 | Variable | Default | Purpose |
 |---|---|---|
 | `REQUEST_TIMEOUT` | `20` | per-request timeout, seconds |
-| `HTTP_PHASE_TIMEOUT` | `25` | cap on the whole HTTP phase, retries included |
-| `BROWSER_PHASE_TIMEOUT` | `45` | cap on the browser fallback |
+| `HTTP_PHASE_TIMEOUT` | `20` | cap on the whole HTTP phase, retries included |
+| `BROWSER_PHASE_TIMEOUT` | `35` | cap on the browser fallback |
+| `DISABLED_STORES` | – | comma-separated keys to skip, e.g. `sharaf_dg,carrefour_ae` |
 | `MAX_RETRIES` | `2` | retries on timeout/5xx/429 |
 | `PER_STORE_RESULTS` | `6` | listings kept per store |
 | `USE_BROWSER_FALLBACK` | `true` | allow Playwright when plain HTTP is blocked |
@@ -175,6 +176,29 @@ pretending otherwise.**
   terms — that is a real constraint, and running this at volume is your call to
   make, not the code's.
 
+## Store reachability, measured
+
+Live results from a UAE residential connection (August 2026). This is the part
+that decides whether the app is useful, and it is not something the code can
+fix on its own:
+
+| Store | Result |
+|---|---|
+| **Amazon.ae** | works — 6 offers over plain HTTP in ~1s |
+| Noon UAE | connection refused at protocol level (`ERR_HTTP2_PROTOCOL_ERROR`); HTTP/1.1 fallback added, unverified |
+| Sharaf DG | serves a **CAPTCHA** to headless browsers; page loads with zero prices in it |
+| Carrefour UAE | internal search API returns 404 — the version we knew has been retired |
+
+Sharaf DG and Carrefour cannot be fixed with better selectors. A CAPTCHA is a
+deliberate "no", and working around it is out of scope here — the honest fixes
+are an official/affiliate feed, or a commercial scraping proxy via
+`SCRAPER_PROXY`. Until then, turn them off so they stop costing every search
+the full timeout budget:
+
+```bash
+DISABLED_STORES=sharaf_dg,carrefour_ae
+```
+
 ## When a store breaks
 
 Stores redesign, and a `parse` failure means that store's selectors are stale.
@@ -195,7 +219,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 143 tests
+python -m pytest -q      # 145 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in

@@ -7,7 +7,7 @@ never means touching scraper or UI code.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .models import Market
 
@@ -43,8 +43,8 @@ class Settings:
     # phase is capped separately. Without this the retry loop can eat the whole
     # per-store deadline, so a slow store is abandoned before the browser
     # fallback (often the only path that works for JS-heavy sites) ever runs.
-    http_phase_timeout: float = _env_float("HTTP_PHASE_TIMEOUT", 25.0)
-    browser_phase_timeout: float = _env_float("BROWSER_PHASE_TIMEOUT", 45.0)
+    http_phase_timeout: float = _env_float("HTTP_PHASE_TIMEOUT", 20.0)
+    browser_phase_timeout: float = _env_float("BROWSER_PHASE_TIMEOUT", 35.0)
     max_concurrent_stores: int = _env_int("MAX_CONCURRENT_STORES", 8)
     per_store_results: int = _env_int("PER_STORE_RESULTS", 6)
 
@@ -120,6 +120,27 @@ STORES: dict[str, StoreSpec] = {
         incurs_import_fees=True,
     ),
 }
+
+
+def _disabled_from_env() -> set[str]:
+    raw = os.environ.get("DISABLED_STORES", "")
+    return {k.strip() for k in raw.split(",") if k.strip()}
+
+
+# A store behind a CAPTCHA or a retired API cannot be fixed by better
+# selectors, and leaving it on costs every search the full timeout budget.
+# Turn those off here rather than editing the registry:
+#   DISABLED_STORES=sharaf_dg,carrefour_ae
+_DISABLED = _disabled_from_env()
+if _DISABLED:
+    unknown = _DISABLED - set(STORES)
+    if unknown:
+        raise ValueError(
+            f"DISABLED_STORES names unknown store(s): {', '.join(sorted(unknown))}. "
+            f"Known: {', '.join(STORES)}"
+        )
+    for _key in _DISABLED:
+        STORES[_key] = replace(STORES[_key], enabled=False)
 
 
 @dataclass(frozen=True)

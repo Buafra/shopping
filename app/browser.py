@@ -115,6 +115,12 @@ async def _get_browser():
                 "--disable-dev-shm-usage",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-gpu",
+                # Some storefronts terminate the HTTP/2 stream rather than
+                # answering, which surfaces as ERR_HTTP2_PROTOCOL_ERROR and no
+                # page at all. Falling back to HTTP/1.1 costs a little speed
+                # and gets a response.
+                "--disable-http2",
+                "--disable-quic",
             ],
         }
 

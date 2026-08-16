@@ -170,7 +170,7 @@ async function runSearch(event) {
   resultsBox.hidden = true;
   storeLog.hidden = true;
   setStatus(`<span class="spinner"></span>Searching UAE and global stores for
-    <strong>${escapeHtml(query)}</strong>… this usually takes 15–45 seconds.`);
+    <strong>${escapeHtml(query)}</strong>… usually 15–30 seconds, up to a minute if a store is slow.`);
 
   const params = new URLSearchParams({ q: query, market: marketSelect.value });
 
