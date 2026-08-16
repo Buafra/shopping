@@ -411,8 +411,14 @@ async def run_store(key: str, query: str, save: bool) -> None:
             print(f"    saved -> {path}")
 
     # -- browser path
+    #
+    # Wait for a price rather than for the document. A storefront that fetches
+    # its listings over XHR renders a complete, product-free page first, and
+    # capturing that is what makes a working store look permanently broken.
     try:
-        rendered = await browser.render(url) if url else ""
+        rendered = await browser.render(
+            url, wait_for_pattern=PRICE_HINT.pattern
+        ) if url else ""
     except Exception as exc:
         rendered = ""
         print(f"\n  browser failed: {type(exc).__name__}: "
@@ -451,12 +457,37 @@ async def probe_url(url: str) -> None:
                   f"{str(exc).splitlines()[0][:110]}")
 
 
+GENERAL_QUERY = "sony wh-1000xm5"
+PC_PARTS_QUERY = "rtx 4070"
+
+
+def default_query_for(keys: list[str], explicit: str | None) -> str:
+    """Pick a query the named stores could plausibly answer.
+
+    Diagnosing a component shop with "sony wh-1000xm5" proves nothing: an empty
+    result is the correct answer, and it is indistinguishable from a scraper
+    that cannot read the page. This bit everyone once already.
+    """
+    if explicit:
+        return explicit
+
+    tagged = [k for k in keys if "pc_parts" in STORES[k].tags]
+    if tagged and len(tagged) == len(keys):
+        print(f'Using "{PC_PARTS_QUERY}" — every named store is a component '
+              f"specialist, and a store with no stock looks exactly like a "
+              f"store that cannot be parsed. Override with --query.")
+        return PC_PARTS_QUERY
+    return GENERAL_QUERY
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("stores", nargs="*", help="store keys, e.g. sharaf_dg noon")
     parser.add_argument("--all", action="store_true", help="every configured store")
-    parser.add_argument("--query", default="sony wh-1000xm5")
+    parser.add_argument("--query", default=None,
+                        help="what to search for (defaults to something the "
+                             "named stores actually stock)")
     parser.add_argument("--no-save", action="store_true", help="do not write captures/")
     parser.add_argument("--url", help="probe any search URL, without a provider")
     parser.add_argument("--timeout", type=float, default=8.0,
@@ -479,6 +510,8 @@ async def main() -> int:
     unknown = [k for k in keys if k not in STORES]
     if unknown:
         parser.error(f"unknown store(s): {', '.join(unknown)}")
+
+    args.query = default_query_for(keys, args.query)
 
     save = not args.no_save
     if save:

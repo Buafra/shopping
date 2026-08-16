@@ -305,3 +305,114 @@ def test_bespoke_providers_keep_the_selector_message():
     """Their URL is known-good, so their selectors really are the suspect."""
     message, kind = build("amazon_ae").describe_empty_result()
     assert "selectors" in message and kind == "parse"
+
+
+# ---- waiting for the products, not for the page --------------------------
+#
+# Microless, Emax, Gear-up and Jumbo each returned around a megabyte of
+# rendered HTML with no price anywhere in it. Their shells load at
+# DOMContentLoaded and the listings arrive over XHR a second or two later, so
+# waiting on the document proves nothing.
+
+def test_script_bodies_do_not_count_as_rendered_content():
+    """The near-miss that made the first attempt useless.
+
+    A storefront ships its price formatting inside a <script>, so matching raw
+    HTML declares the content "arrived" instantly — on exactly the pages this
+    is meant to wait for."""
+    from app.browser import visible_html
+
+    html = """<html><body><div>Loading…</div>
+      <script>var tpl = "AED 1,949.00";</script>
+      <style>.p:after{content:"AED"}</style>
+    </body></html>"""
+
+    assert "1,949.00" not in visible_html(html)
+    assert "Loading" in visible_html(html)
+
+
+def test_visible_html_keeps_the_real_markup():
+    from app.browser import visible_html
+
+    assert "AED 2,150" in visible_html("<div><span>AED 2,150.00</span></div>")
+
+
+def test_polling_returns_the_page_once_the_content_appears():
+    import asyncio
+
+    from app.browser import _poll_for
+
+    class Page:
+        """Renders its products on the third look, like an XHR arriving."""
+
+        def __init__(self):
+            self.looks = 0
+
+        async def content(self):
+            self.looks += 1
+            if self.looks < 3:
+                return "<html><body><div>Loading...</div></body></html>"
+            return "<html><body><div>AED 1,949.00</div></body></html>"
+
+        async def wait_for_timeout(self, _ms):
+            return None
+
+    page = Page()
+    html = asyncio.run(_poll_for(page, r"AED\s?[\d,.]+", "http://x"))
+    assert html is not None and "1,949.00" in html
+    assert page.looks == 3
+
+
+def test_polling_gives_up_rather_than_hanging():
+    """A store that never loads its products must not hold the search open."""
+    import asyncio
+
+    from app.browser import (CONTENT_POLL_BUDGET_MS, CONTENT_POLL_INTERVAL_MS,
+                             _poll_for)
+
+    class Empty:
+        def __init__(self):
+            self.looks = 0
+
+        async def content(self):
+            self.looks += 1
+            return "<html><body>nothing here</body></html>"
+
+        async def wait_for_timeout(self, _ms):
+            return None
+
+    page = Empty()
+    assert asyncio.run(_poll_for(page, r"AED\s?[\d,.]+", "http://x")) is None
+    assert page.looks <= CONTENT_POLL_BUDGET_MS // CONTENT_POLL_INTERVAL_MS + 1
+
+
+def test_the_generic_browser_path_waits_for_a_price(monkeypatch):
+    import asyncio
+
+    import app.providers.generic as generic_module
+
+    seen = {}
+
+    async def fake_render(url, **kwargs):
+        seen.update(url=url, **kwargs)
+        return SHOP_PAGE
+
+    monkeypatch.setattr(generic_module, "render", fake_render)
+    offers = asyncio.run(provider().search_browser("rtx 4070", 10))
+
+    assert seen.get("wait_for_pattern"), "browser path did not wait for content"
+    assert len(offers) == 3
+
+
+# ---- diagnosing a component shop with the right query --------------------
+
+def test_diagnose_picks_a_query_the_named_stores_could_answer():
+    """Diagnosing a component shop with "sony wh-1000xm5" proves nothing: an
+    empty result is the correct answer there, and it is indistinguishable from
+    a scraper that cannot read the page."""
+    import diagnose
+
+    assert diagnose.default_query_for(["microless", "emax"], None) == "rtx 4070"
+    assert diagnose.default_query_for(["amazon_ae", "microless"], None) \
+        == "sony wh-1000xm5"
+    assert diagnose.default_query_for(["microless"], "ddr5 ram") == "ddr5 ram"

@@ -14,6 +14,7 @@ import glob
 import logging
 import os
 import random
+import re
 from urllib.parse import unquote, urlparse
 
 from .config import SETTINGS, USER_AGENTS
@@ -231,10 +232,57 @@ async def close_browser() -> None:
     _playwright = None
 
 
+# How long to keep checking for late-arriving content, and how often. Kept
+# well inside the browser phase budget so a store that never loads its
+# products still leaves time for an orderly return.
+CONTENT_POLL_BUDGET_MS = 9_000
+CONTENT_POLL_INTERVAL_MS = 500
+
+
+# Script and style bodies are not rendered content. A storefront that fetches
+# its listings over XHR ships the price formatting — and often a bootstrap
+# payload — inside a <script>, so matching the raw HTML declares victory
+# immediately on exactly the pages this is meant to wait for.
+_NON_CONTENT = re.compile(
+    r"<(script|style|template|noscript)\b[^>]*>.*?</\1>", re.I | re.S
+)
+
+
+def visible_html(html: str) -> str:
+    return _NON_CONTENT.sub(" ", html or "")
+
+
+async def _poll_for(page, pattern: str, url: str) -> str | None:
+    """Wait until the page's rendered content matches `pattern`.
+
+    Returns None if the content never appeared, so the caller falls back to its
+    normal settle-and-return path rather than losing the page entirely.
+    """
+    compiled = re.compile(pattern, re.I)
+    waited = 0
+    while waited < CONTENT_POLL_BUDGET_MS:
+        try:
+            html = await page.content()
+        except Exception:
+            return None
+        if compiled.search(visible_html(html)):
+            log.debug("content appeared on %s after %dms", url, waited)
+            return html
+        try:
+            await page.wait_for_timeout(CONTENT_POLL_INTERVAL_MS)
+        except Exception:
+            return None
+        waited += CONTENT_POLL_INTERVAL_MS
+
+    log.debug("content matching %r never appeared on %s", pattern, url)
+    return None
+
+
 async def render(
     url: str,
     *,
     wait_for: str | None = None,
+    wait_for_pattern: str | None = None,
     locale: str = "en-AE",
     timezone: str = "Asia/Dubai",
     extra_wait_ms: int = 1200,
@@ -243,6 +291,12 @@ async def render(
 
     `wait_for` is a CSS selector worth waiting on; if it never appears we still
     return whatever rendered, because a partial page often still parses.
+
+    `wait_for_pattern` is a regex that content worth having would match. Modern
+    storefronts return an empty shell at DOMContentLoaded and fetch the
+    products over XHR a moment later, so waiting on the *page* proves nothing —
+    four UAE stores rendered a megabyte of HTML with no price anywhere in it.
+    Polling for the pattern waits for the data instead of for the document.
     """
     if not SETTINGS.use_browser_fallback:
         raise BrowserUnavailable("browser fallback disabled by configuration")
@@ -305,6 +359,11 @@ async def render(
                 await page.wait_for_selector(wait_for, timeout=8_000)
             except Exception:
                 log.debug("selector %r never appeared on %s", wait_for, url)
+
+        if wait_for_pattern:
+            html = await _poll_for(page, wait_for_pattern, url)
+            if html is not None:
+                return html
 
         if extra_wait_ms:
             try:

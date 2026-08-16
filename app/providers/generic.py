@@ -90,7 +90,17 @@ class GenericProvider(Provider):
         return []
 
     async def search_browser(self, query: str, limit: int) -> list[Offer]:
-        html = await render(self.search_urls(query)[0])
+        """Render the search page, waiting for the products rather than the page.
+
+        Four UAE stores returned a megabyte of rendered HTML with no price
+        anywhere in it: their shells load at DOMContentLoaded and the listings
+        arrive over XHR a second or two later. Waiting for a price to show up
+        is the difference between a store that works and one that reports
+        "no listings parsed" forever.
+        """
+        html = await render(
+            self.search_urls(query)[0], wait_for_pattern=PRICE_TEXT.pattern
+        )
         return self._parse(html, limit)
 
     # -- parsing ------------------------------------------------------------
