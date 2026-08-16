@@ -226,3 +226,68 @@ def test_provider_uses_the_detected_currency():
 
     assert offers[0].currency == "AED", "store default USD must not override the page"
     assert offers[0].price == 2964.00
+
+
+# ---- prices that were not prices -----------------------------------------
+#
+# All three came out of one live UAE run. Each produced a plausible-looking
+# number, which is the dangerous kind of wrong: a wrong price ranks and misleads.
+
+def _card(html):
+    from selectolax.parser import HTMLParser
+    return HTMLParser(html).css_first("div")
+
+
+def test_a_model_number_does_not_fuse_with_the_price():
+    """Carrefour listed a Logitech G305 mouse at AED 305,114.
+
+    The price pattern allowed whitespace inside the number, so "G305 114 AED"
+    matched as "305 114 AED". An absurd high price is not a harmless outlier
+    either — it drags the median the price-floor filter is built on."""
+    from app.structural import _price_from
+
+    price, currency = _price_from(
+        _card("<div><span>Logitech Gaming Mouse Wireless G305</span>"
+              "<span>114 AED</span></div>")
+    )
+    assert price == 114.0
+    assert currency == "AED"
+
+
+def test_a_number_glued_to_a_letter_is_not_a_price():
+    """"Logitech G305 AED 114" must not offer "305 AED" as a candidate."""
+    from app.structural import PRICE_TEXT
+
+    assert [m.group(0) for m in PRICE_TEXT.finditer("Logitech G305 AED 114.00")] \
+        == ["AED 114.00"]
+    assert not PRICE_TEXT.search("G305 AED")
+
+
+def test_a_buy_now_pay_later_split_is_not_the_price():
+    """UAEGAMERS quoted an RTX 4070 Ti Super at AED 104 — one of four
+    interest-free payments. A quartered price wins the comparison outright."""
+    from app.structural import _price_from
+
+    price, _ = _price_from(
+        _card("<div><span>ZOTAC GeForce RTX 4070 Ti SUPER Trinity</span>"
+              "<span>AED 2,199.00</span>"
+              "<span>or 4 payments of AED 104.00</span></div>")
+    )
+    assert price == 2199.00
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("AED 1,299.00", 1299.00),
+    ("1,299.00 AED", 1299.00),
+    ("2.199,00 €", 2199.00),
+    ("£549.99", 549.99),
+    ("$45.99", 45.99),
+])
+def test_ordinary_prices_still_parse(text, expected):
+    """The tightened pattern must not cost us the formats that worked."""
+    from app.net import parse_price
+    from app.structural import PRICE_TEXT
+
+    match = PRICE_TEXT.search(text)
+    assert match, f"{text!r} no longer recognised"
+    assert parse_price(match.group(0)) == pytest.approx(expected)

@@ -182,7 +182,16 @@ def lists_multiple_products(query: str, title: str) -> bool:
     the whole comparison as "the cheapest listing".
     """
     extra = product_models(title) - product_models(query)
-    return len(extra) >= 2
+
+    # A part number that restates the model is not a second product. "PNY
+    # Quadro T1000 … VCNT1000" yields both `t1000` and `vcnt1000`, which read
+    # as two cards on one page when they are one card written twice. Keep only
+    # models that are not spelled inside another.
+    distinct = {
+        model for model in extra
+        if not any(model != other and model in other for other in extra)
+    }
+    return len(distinct) >= 2
 
 
 def looks_like_a_system(query: str, title: str) -> bool:

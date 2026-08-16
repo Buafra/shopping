@@ -524,7 +524,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 375 tests
+python -m pytest -q      # 384 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in

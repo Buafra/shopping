@@ -343,3 +343,18 @@ def test_asking_for_a_laptop_still_finds_laptops():
 def test_asking_for_a_cpu_is_not_read_as_a_prebuilt():
     """The CPU marker must only fire when the query did not name the CPU."""
     assert relevance("core i5 12400f", "Intel Core i5-12400F Desktop Processor") == 1.0
+
+
+def test_a_part_number_restating_the_model_is_not_a_second_product():
+    """A live run rejected "PNY NVIDIA Quadro T1000 … VCNT1000" as a listing
+    covering several products. It is one card whose SKU code restates its own
+    model number — harmless here, since a Quadro is not an RTX 4070 either way,
+    but the same shape would reject a genuine card with a long part number."""
+    from app.matching import lists_multiple_products
+
+    assert not lists_multiple_products(
+        "rtx 4070",
+        "PNY NVIDIA Quadro T1000 Low-Profile Graphics Card, 4GB GDDR6 - VCNT1000",
+    )
+    # A page genuinely selling several cards must still be caught.
+    assert lists_multiple_products("rtx 4070", "RTX 3060 3070 4060 4070 GPU Cards")

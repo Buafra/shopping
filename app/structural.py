@@ -31,9 +31,18 @@ from .net import absolutise, clean_text, parse_int, parse_price, parse_rating
 # £ and € were missing, so a UK or German storefront had no prices as far as
 # this module was concerned, every card was discarded for want of one, and the
 # store reported "markup changed" — for markup it had never been able to read.
+#
+# Whitespace is deliberately *not* allowed inside the number. It used to be,
+# and a Carrefour card reading "Logitech Gaming Mouse Wireless G305 114 AED"
+# matched "305 114 AED" — the model number's digits fused with the price and
+# the mouse was listed at AED 305,114. An absurd high price is not a harmless
+# outlier either: it drags the median that the price-floor filter is built on.
 PRICE_TEXT = re.compile(
-    r"(?:AED|USD|SAR|GBP|EUR|Dhs\.?|د\.إ|\$|£|€)\s?\d[\d,.\s]*"
-    r"|\d[\d,.\s]*\s?(?:AED|SAR|GBP|EUR|د\.إ|£|€)",
+    r"(?:AED|USD|SAR|GBP|EUR|Dhs\.?|د\.إ|\$|£|€)\s?\d[\d,.]*"
+    # For the trailing-currency form the number must not be glued to a letter:
+    # "Logitech G305 AED 114" otherwise offers "305 AED" as a candidate price.
+    # No real price begins in the middle of a model number.
+    r"|(?<![A-Za-z0-9])\d[\d,.]*\s?(?:AED|SAR|GBP|EUR|د\.إ|£|€)",
     re.I,
 )
 # A store that localises by IP quotes local currency on the same markup. The
@@ -69,7 +78,11 @@ RATING_TEXT = re.compile(r"\b([0-5](?:[.,]\d)?)\s*(?:/\s*5|out of 5|\()", re.I)
 # but leads a real price ("25% OFF  AED 999.00"), so it belongs below.
 NOT_A_PRICE_BEFORE = re.compile(
     r"(save|saving|you save|discount of|was|before|instead of|rrp|"
-    r"list price|reduced from|worth)\W{0,4}$",
+    r"list price|reduced from|worth|"
+    # Buy-now-pay-later splits, which UAE storefronts put on every card:
+    # "or 4 interest-free payments of AED 104". Taking that as the price
+    # quartered a graphics card and would have won the comparison outright.
+    r"payments? of|instal?ments? of|as low as|starting (?:at|from))\W{0,4}$",
     re.I,
 )
 # ...or when it is quoted per month as an instalment, or is itself the discount.
