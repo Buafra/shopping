@@ -69,6 +69,32 @@ class BrowserUnavailable(RuntimeError):
     """Playwright or Chromium is not usable in this environment."""
 
 
+# Chromium reports network failures as ERR_* codes inside the exception text.
+_NETWORK_MARKERS = (
+    "ERR_TUNNEL_CONNECTION_FAILED", "ERR_PROXY_CONNECTION_FAILED",
+    "ERR_NAME_NOT_RESOLVED", "ERR_INTERNET_DISCONNECTED",
+    "ERR_CONNECTION_REFUSED", "ERR_CONNECTION_RESET",
+    "ERR_CONNECTION_TIMED_OUT", "ERR_ADDRESS_UNREACHABLE",
+)
+
+
+def describe_error(exc: Exception, host: str = "") -> str:
+    """Turn a raw Playwright exception into something a human can act on."""
+    text = str(exc)
+    where = f" {host}" if host else ""
+
+    if any(marker in text for marker in _NETWORK_MARKERS):
+        return (
+            f"cannot reach{where} — the network or proxy refused the connection "
+            f"(the store itself may be fine)"
+        )
+    if "ERR_CERT" in text or "SSL" in text:
+        return f"TLS verification failed for{where} — check your CA configuration"
+    if "Timeout" in text or "timeout" in text:
+        return f"{host or 'the page'} did not finish loading in time"
+    return f"browser could not load{where}: {text.splitlines()[0][:140]}"
+
+
 async def _get_browser():
     global _playwright, _browser
     if _browser is not None and _browser.is_connected():

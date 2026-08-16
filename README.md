@@ -120,6 +120,19 @@ pretending otherwise.**
   return wrong data, and each store's outcome — including the error — is shown
   in the response and in the UI's *Store coverage* panel. A comparison built
   from 5 of 8 stores says so.
+- **Failures tell you which thing to fix.** Each store failure is classified
+  (`error_kind` in the API), because these need opposite responses:
+
+  | Kind | Means | What to do |
+  |---|---|---|
+  | `unreachable` | no route, DNS or proxy refusal | fix your network / `SCRAPER_PROXY` |
+  | `blocked` | store refused automated traffic (403/429) | use a residential IP |
+  | `timeout` | store too slow to answer | raise `REQUEST_TIMEOUT` |
+  | `parse` | page loaded fine, nothing parsed out | the store redesigned — update that provider's selectors |
+  | `no_results` | store genuinely has no match | broaden the query |
+
+  If every store fails the same way, the summary note says so outright rather
+  than leaving you to guess from a list of red rows.
 - **Stores block bots.** Amazon in particular blocks datacentre IPs hard. Each
   provider tries plain HTTP first and falls back to a real headless browser.
   From a residential IP most stores answer; from a cloud VM expect Amazon and
@@ -136,7 +149,7 @@ pretending otherwise.**
 ## Tests
 
 ```bash
-python -m pytest -q      # 118 tests
+python -m pytest -q      # 127 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in

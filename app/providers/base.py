@@ -19,8 +19,10 @@ from urllib.parse import quote_plus
 from selectolax.parser import HTMLParser
 
 from ..browser import BrowserUnavailable
+from ..browser import describe_error as describe_browser_error
 from ..config import SETTINGS, StoreSpec
 from ..models import Offer, StoreStatus
+from ..net import FetchError
 
 log = logging.getLogger(__name__)
 
@@ -75,31 +77,52 @@ class Provider(abc.ABC):
         started = time.perf_counter()
         method = "http"
         error: str | None = None
+        error_kind: str | None = None
+        fetch_succeeded = False
         offers: list[Offer] = []
 
         try:
             offers = await self.search_http(query, limit)
+            fetch_succeeded = True
+        except FetchError as exc:
+            error, error_kind = str(exc), exc.kind
+            log.info("%s http path failed: %s", self.spec.key, error)
         except Exception as exc:
-            error = f"{type(exc).__name__}: {exc}"
+            error, error_kind = f"{type(exc).__name__}: {exc}", "error"
             log.info("%s http path failed: %s", self.spec.key, error)
 
         if not offers and SETTINGS.use_browser_fallback:
             try:
                 offers = await self.search_browser(query, limit)
                 method = "browser"
+                fetch_succeeded = True
                 if offers:
-                    error = None
+                    error, error_kind = None, None
             except BrowserUnavailable as exc:
                 log.debug("%s browser path unavailable: %s", self.spec.key, exc)
             except Exception as exc:
-                error = f"{type(exc).__name__}: {exc}"
-                log.info("%s browser path failed: %s", self.spec.key, error)
+                # Keep the HTTP diagnosis if we already have one — it names the
+                # cause more precisely than Chromium's ERR_* string does.
+                browser_error = describe_browser_error(
+                    exc, getattr(self, "origin", self.spec.label)
+                )
+                error = error or browser_error
+                error_kind = error_kind or "unreachable"
+                log.info("%s browser path failed: %s", self.spec.key, browser_error)
 
         offers = self._postprocess(offers, limit)
         elapsed = int((time.perf_counter() - started) * 1000)
 
         if not offers and error is None:
-            error = "no matching results found"
+            # The page came back fine but nothing parsed out of it. That is a
+            # different problem from a network failure, and pointing at the
+            # parser rather than the connection saves real debugging time.
+            error, error_kind = (
+                ("page fetched but no listings parsed — this store's markup has "
+                 "probably changed, check its provider selectors", "parse")
+                if fetch_succeeded
+                else ("no matching results found", "no_results")
+            )
 
         status = StoreStatus(
             store=self.spec.key,
@@ -109,6 +132,7 @@ class Provider(abc.ABC):
             offer_count=len(offers),
             elapsed_ms=elapsed,
             error=error,
+            error_kind=error_kind,
             method=method,
         )
         return offers, status

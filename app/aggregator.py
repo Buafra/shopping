@@ -50,6 +50,45 @@ async def _run_provider(
             )
 
 
+def _diagnose_total_failure(statuses: list[StoreStatus]) -> str:
+    """When nothing came back, name the most likely single cause.
+
+    "Every store blocked you" and "your machine has no route to the internet"
+    look identical in a list of red rows, but they need opposite fixes.
+    """
+    kinds = [s.error_kind for s in statuses if s.error_kind]
+    if not kinds:
+        return "No store returned results."
+
+    dominant = max(set(kinds), key=kinds.count)
+    share = kinds.count(dominant)
+    everywhere = share == len(statuses)
+
+    if dominant == "unreachable":
+        return (
+            "No store could be reached at all"
+            + (" — every single one failed to connect, which points at this "
+               "machine's network, proxy or DNS rather than at the stores."
+               if everywhere else
+               ". Check connectivity and any proxy settings.")
+        )
+    if dominant == "blocked":
+        return (
+            "Every store refused the request as automated traffic. Cloud and "
+            "datacentre IPs are blocked aggressively — set SCRAPER_PROXY to a "
+            "residential proxy, or run this from a home connection."
+        )
+    if dominant == "timeout":
+        return ("Every store timed out. The network may be slow or throttled — "
+                "try raising REQUEST_TIMEOUT.")
+    if dominant == "parse":
+        return ("Stores responded, but no listing could be parsed from any of "
+                "them. That points at the parsers, not the network — the "
+                "selectors in app/providers/ likely need updating.")
+    return ("No store returned results for this query. Try a broader search "
+            "term, or check the per-store errors below.")
+
+
 async def search(
     query: str,
     *,
@@ -87,10 +126,7 @@ async def search(
     statuses.sort(key=lambda s: (s.market.value, s.store_label))
 
     if not all_offers:
-        notes.append(
-            "No store returned results. Storefronts frequently block automated "
-            "requests — check /api/health and the per-store errors below."
-        )
+        notes.append(_diagnose_total_failure(statuses))
         return SearchResponse(
             query=query, offers=[], stores=statuses, fx_rates=rates,
             fx_source=fx_source, notes=notes,

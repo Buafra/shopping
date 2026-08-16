@@ -232,3 +232,56 @@ def test_browser_render_disabled_raises_not_hangs():
 
     with pytest.raises(BrowserUnavailable):
         asyncio.run(render("https://example.com"))
+
+
+# ------------------------------------------------------------ diagnosis ----
+
+def _status(kind):
+    from app.models import Market, StoreStatus
+    return StoreStatus(store="s", store_label="S", market=Market.LOCAL, ok=False,
+                       error="x", error_kind=kind)
+
+
+def test_total_failure_blames_the_network_when_nothing_connects():
+    from app.aggregator import _diagnose_total_failure
+
+    note = _diagnose_total_failure([_status("unreachable")] * 4)
+    assert "network" in note.lower()
+    assert "block" not in note.lower(), "must not blame the stores for a local fault"
+
+
+def test_total_failure_blames_bot_blocking_when_stores_refuse():
+    from app.aggregator import _diagnose_total_failure
+
+    note = _diagnose_total_failure([_status("blocked")] * 4)
+    assert "SCRAPER_PROXY" in note
+
+
+def test_total_failure_blames_parsers_when_pages_loaded_fine():
+    from app.aggregator import _diagnose_total_failure
+
+    note = _diagnose_total_failure([_status("parse")] * 3)
+    assert "parser" in note.lower() and "network" in note.lower()
+
+
+def test_total_failure_handles_no_recorded_kinds():
+    from app.aggregator import _diagnose_total_failure
+
+    assert _diagnose_total_failure([]) == "No store returned results."
+
+
+@pytest.mark.asyncio
+async def test_parse_failure_is_reported_as_such(monkeypatch):
+    """A store that answers but yields nothing must be blamed on the parser,
+    not reported as a network problem."""
+    from app.providers.ebay import EbayProvider
+
+    async def empty(self, query, limit):
+        return []
+
+    monkeypatch.setattr(EbayProvider, "search_http", empty)
+
+    result = await aggregator.search("sony wh-1000xm5", stores=["ebay"])
+    status = result.stores[0]
+    assert status.error_kind == "parse"
+    assert "markup" in (status.error or "")

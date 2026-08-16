@@ -65,6 +65,8 @@ class StoreStatus(BaseModel):
     offer_count: int = 0
     elapsed_ms: int = 0
     error: str | None = None
+    # "unreachable" | "timeout" | "blocked" | "http_error" | "no_results" | "parse"
+    error_kind: str | None = None
     method: str | None = None  # "http" or "browser"
 
 

@@ -131,5 +131,5 @@ class AliExpressProvider(Provider):
         return offers
 
 
-def aliexpress() -> AliExpressProvider:
+def make() -> AliExpressProvider:
     return AliExpressProvider(STORES["aliexpress"])

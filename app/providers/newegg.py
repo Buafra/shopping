@@ -100,5 +100,5 @@ class NeweggProvider(Provider):
         return value if 0 < value <= 5 else None
 
 
-def newegg() -> NeweggProvider:
+def make() -> NeweggProvider:
     return NeweggProvider(STORES["newegg"])

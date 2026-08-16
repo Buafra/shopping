@@ -10,24 +10,28 @@ from typing import Callable
 
 from ..config import STORES, StoreSpec
 from ..models import Market
-from .aliexpress import aliexpress
+from .aliexpress import make as make_aliexpress
 from .amazon import amazon_ae, amazon_com
 from .base import Provider
-from .carrefour_ae import carrefour_ae
-from .ebay import ebay
-from .newegg import newegg
-from .noon import noon
-from .sharaf_dg import sharaf_dg
+from .carrefour_ae import make as make_carrefour_ae
+from .ebay import make as make_ebay
+from .newegg import make as make_newegg
+from .noon import make as make_noon
+from .sharaf_dg import make as make_sharaf_dg
 
+# Factories are aliased on import so they never shadow their own submodule.
+# `from .ebay import ebay` would rebind `app.providers.ebay` from the module to
+# the function, which silently breaks anything that patches module-level
+# constants (base URLs, API endpoints) for testing.
 FACTORIES: dict[str, Callable[[], Provider]] = {
     "amazon_ae": amazon_ae,
-    "noon": noon,
-    "sharaf_dg": sharaf_dg,
-    "carrefour_ae": carrefour_ae,
+    "noon": make_noon,
+    "sharaf_dg": make_sharaf_dg,
+    "carrefour_ae": make_carrefour_ae,
     "amazon_com": amazon_com,
-    "ebay": ebay,
-    "aliexpress": aliexpress,
-    "newegg": newegg,
+    "ebay": make_ebay,
+    "aliexpress": make_aliexpress,
+    "newegg": make_newegg,
 }
 
 

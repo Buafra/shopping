@@ -155,5 +155,5 @@ class CarrefourProvider(Provider):
         return offers
 
 
-def carrefour_ae() -> CarrefourProvider:
+def make() -> CarrefourProvider:
     return CarrefourProvider(STORES["carrefour_ae"])

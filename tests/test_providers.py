@@ -11,13 +11,13 @@ from pathlib import Path
 
 import pytest
 
-from app.providers.aliexpress import aliexpress
+from app.providers.aliexpress import make as aliexpress
 from app.providers.amazon import amazon_ae, amazon_com
-from app.providers.carrefour_ae import carrefour_ae
-from app.providers.ebay import ebay
-from app.providers.newegg import newegg
-from app.providers.noon import noon
-from app.providers.sharaf_dg import sharaf_dg
+from app.providers.carrefour_ae import make as carrefour_ae
+from app.providers.ebay import make as ebay
+from app.providers.newegg import make as newegg
+from app.providers.noon import make as noon
+from app.providers.sharaf_dg import make as sharaf_dg
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -239,3 +239,26 @@ def test_parsers_survive_garbage_input(factory):
     """A redesigned store page must yield zero offers, never an exception."""
     for junk in ("", "<html></html>", "not html at all", "<div class='s-item'></div>"):
         assert factory()._parse(junk, limit=5) == []
+
+
+def test_factories_do_not_shadow_their_modules():
+    """`from .ebay import ebay` would rebind app.providers.ebay to a function,
+    silently breaking any patch of a module-level constant. Keep them distinct."""
+    import types
+
+    from app import providers
+
+    for name in ("aliexpress", "carrefour_ae", "ebay", "newegg", "noon", "sharaf_dg"):
+        attr = getattr(providers, name)
+        assert isinstance(attr, types.ModuleType), (
+            f"app.providers.{name} is a {type(attr).__name__}, expected the module"
+        )
+
+
+def test_registry_builds_every_configured_store():
+    from app.config import STORES
+    from app.providers import build, build_all
+
+    assert {p.spec.key for p in build_all()} == set(STORES)
+    for key in STORES:
+        assert build(key).spec.key == key

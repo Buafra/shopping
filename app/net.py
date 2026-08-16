@@ -70,7 +70,57 @@ async def close_client() -> None:
 
 
 class FetchError(RuntimeError):
-    """Raised when a URL could not be fetched after all retries."""
+    """Raised when a URL could not be fetched after all retries.
+
+    `kind` says *why*, because the fix differs completely: a network problem is
+    yours to solve, a block needs a different IP, and a bad status usually means
+    the store changed its endpoint.
+    """
+
+    def __init__(self, message: str, kind: str = "error", hint: str = "") -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.hint = hint
+
+    def __str__(self) -> str:
+        base = super().__str__()
+        return f"{base} — {self.hint}" if self.hint else base
+
+
+# Status codes storefronts use when they think you are a bot.
+BLOCK_STATUS = {401, 403, 407, 429, 503}
+
+
+def classify_transport_error(exc: Exception, url: str) -> FetchError:
+    """Say *why* a request failed, in terms that point at the fix.
+
+    Dispatch on the exception type first: httpx raises ProxyError with a bare
+    "403 Forbidden" body, so matching on message text alone misfiles the single
+    most common failure in a locked-down network.
+    """
+    text = str(exc).lower()
+    host = url.split("/")[2] if "://" in url else url
+    detail = str(exc).strip().splitlines()[0][:80] if str(exc).strip() else ""
+
+    if isinstance(exc, httpx.ProxyError) or "tunnel" in text or "connect_rejected" in text:
+        return FetchError(
+            f"cannot reach {host} through the proxy",
+            kind="unreachable",
+            hint=f"the proxy or network policy refused the connection"
+                 f"{f' ({detail})' if detail else ''}",
+        )
+    if isinstance(exc, httpx.TimeoutException) or "timed out" in text:
+        return FetchError(f"{host} did not respond in time", kind="timeout",
+                          hint="raise REQUEST_TIMEOUT or try again")
+    if any(s in text for s in ("name or service not known", "nodename", "getaddrinfo",
+                               "no address associated", "temporary failure in name")):
+        return FetchError(f"cannot resolve {host}", kind="unreachable",
+                          hint="DNS lookup failed — check your connection")
+    if isinstance(exc, httpx.ConnectError):
+        return FetchError(f"cannot connect to {host}", kind="unreachable",
+                          hint=detail or "connection refused")
+    return FetchError(f"network error reaching {host}", kind="unreachable",
+                      hint=detail)
 
 
 async def fetch(
@@ -96,17 +146,30 @@ async def fetch(
                 await asyncio.sleep(1.5 * (2**attempt) + random.random())
                 merged["User-Agent"] = random.choice(USER_AGENTS)
                 continue
+            if resp.status_code in BLOCK_STATUS:
+                raise FetchError(
+                    f"HTTP {resp.status_code} from {url.split('/')[2]}",
+                    kind="blocked",
+                    hint="the store refused an automated request; try "
+                         "SCRAPER_PROXY or a residential IP",
+                )
             if resp.status_code >= 400:
-                raise FetchError(f"HTTP {resp.status_code} from {url}")
+                raise FetchError(
+                    f"HTTP {resp.status_code} from {url.split('/')[2]}",
+                    kind="http_error",
+                    hint="the store's search endpoint may have moved",
+                )
             return resp
+        except FetchError:
+            raise
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             last_exc = exc
             if attempt < SETTINGS.max_retries:
                 await asyncio.sleep(1.5 * (2**attempt) + random.random())
                 continue
-            raise FetchError(f"{type(exc).__name__} fetching {url}") from exc
+            raise classify_transport_error(exc, url) from exc
 
-    raise FetchError(f"exhausted retries for {url}") from last_exc
+    raise FetchError(f"exhausted retries for {url}", kind="unreachable") from last_exc
 
 
 # --------------------------------------------------------------------------

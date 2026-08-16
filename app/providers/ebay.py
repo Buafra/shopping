@@ -123,5 +123,5 @@ class EbayProvider(Provider):
         return self.spec.default_delivery_days
 
 
-def ebay() -> EbayProvider:
+def make() -> EbayProvider:
     return EbayProvider(STORES["ebay"])

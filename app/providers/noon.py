@@ -141,5 +141,5 @@ class NoonProvider(Provider):
         return offers
 
 
-def noon() -> NoonProvider:
+def make() -> NoonProvider:
     return NoonProvider(STORES["noon"])

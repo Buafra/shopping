@@ -74,3 +74,37 @@ def test_parse_rating_rescales():
 ])
 def test_absolutise(href, expected):
     assert absolutise(href, "https://www.amazon.ae") == expected
+
+
+# ---- error classification -------------------------------------------------
+
+def test_transport_errors_are_classified():
+    """Knowing *why* a store failed is the difference between fixing your
+    network and fixing a selector."""
+    import httpx
+
+    from app.net import classify_transport_error
+
+    url = "https://www.noon.com/search"
+
+    # httpx reports a policy-denied CONNECT as a bare "403 Forbidden" with no
+    # mention of a proxy, so this must be classified on type, not text.
+    proxy = classify_transport_error(httpx.ProxyError("403 Forbidden"), url)
+    assert proxy.kind == "unreachable"
+    assert "noon.com" in str(proxy)
+    assert "proxy" in str(proxy).lower()
+
+    dns = classify_transport_error(
+        httpx.ConnectError("[Errno -2] Name or service not known"), url)
+    assert dns.kind == "unreachable"
+
+    slow = classify_transport_error(httpx.ReadTimeout("timed out"), url)
+    assert slow.kind == "timeout"
+
+
+def test_fetch_error_renders_hint():
+    from app.net import FetchError
+
+    err = FetchError("HTTP 403 from amazon.ae", kind="blocked", hint="try a residential IP")
+    assert "403" in str(err) and "residential IP" in str(err)
+    assert err.kind == "blocked"

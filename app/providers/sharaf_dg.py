@@ -141,5 +141,5 @@ class SharafDGProvider(Provider):
         return offers
 
 
-def sharaf_dg() -> SharafDGProvider:
+def make() -> SharafDGProvider:
     return SharafDGProvider(STORES["sharaf_dg"])
