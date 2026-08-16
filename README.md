@@ -315,6 +315,31 @@ from an address that does not look automated — a **residential** or
 **mobile** proxy. A datacentre proxy will not help; those ranges are exactly
 what the stores already block.
 
+### Choosing one
+
+Three kinds are sold, and only two are any use here:
+
+| Type | Roughly | Works? |
+|---|---|---|
+| **Datacentre** | $1–3 per IP/month | **No.** These ranges are precisely what the stores already block |
+| **Residential** | $2–9 per GB | Yes — real home IPs, what you want |
+| **Mobile** | $8–20 per GB | Yes, and hardest to block, but overkill for this |
+
+Providers in this market include IPRoyal, Webshare, Decodo (formerly
+Smartproxy), Proxy-Cheap, Oxylabs and Bright Data. The first four are easier
+to sign up for; the last two are larger but often require business
+verification, which is friction for a personal tool. Prices move — check
+current rates rather than trusting this table.
+
+**Size the plan by the right number.** One search fetches roughly 1–2 MB per
+store, so about 10 MB all-in — around **100 searches per GB**. Traffic is not
+your cost; a monthly minimum is. Prefer pay-as-you-go with credit that does
+not expire over a subscription, and buy the smallest amount that lets you
+test. Most providers include a small trial.
+
+What you are given is a **gateway host, a port, a username and a password** —
+which is exactly what goes into `SCRAPER_PROXY`.
+
 ```powershell
 # this session only
 $env:SCRAPER_PROXY = "http://<user>:<pass>@<your-proxy-host>:<port>"
