@@ -317,16 +317,26 @@ what the stores already block.
 
 ```powershell
 # this session only
-$env:SCRAPER_PROXY = "http://USER:PASS@gateway.provider.com:7000"
+$env:SCRAPER_PROXY = "http://<user>:<pass>@<your-proxy-host>:<port>"
 python cli.py "rtx 4070"
 
 # permanently, for your account
-setx SCRAPER_PROXY "http://USER:PASS@gateway.provider.com:7000"
+setx SCRAPER_PROXY "http://<user>:<pass>@<your-proxy-host>:<port>"
 ```
 
 ```bash
 # macOS / Linux
-export SCRAPER_PROXY="http://USER:PASS@gateway.provider.com:7000"
+export SCRAPER_PROXY="http://<user>:<pass>@<your-proxy-host>:<port>"
+```
+
+Substitute your provider's real values — a placeholder host resolves to
+nothing and fails exactly like having no internet, so the app detects the
+documented placeholders and goes direct rather than breaking every store at
+once. On Windows, `setx` persists the value for **future** shells; to undo it:
+
+```powershell
+setx SCRAPER_PROXY ""
+Remove-Item Env:\SCRAPER_PROXY     # clears the current shell too
 ```
 
 If the password contains `@`, `:` or `/`, percent-encode it — `p@ss` becomes
@@ -373,7 +383,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 262 tests
+python -m pytest -q      # 269 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in

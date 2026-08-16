@@ -171,3 +171,56 @@ def test_history_survives_reopening_the_database(db):
     history.record(response([offer(2150)]), db_path=db)
     # A fresh connection, as a later CLI invocation would make.
     assert history.list_searches(db_path=db)[0].latest_best_aed == 2150
+
+
+# ---- a broken run must not invent price history ---------------------------
+
+def failed_response(query="rtx 4070"):
+    """Every store errored — a network or proxy fault, not a price observation."""
+    from app.models import StoreStatus
+    return SearchResponse(
+        query=query, offers=[],
+        stores=[
+            StoreStatus(store="amazon_ae", store_label="Amazon.ae",
+                        market=Market.LOCAL, ok=False,
+                        error="cannot resolve www.amazon.ae", error_kind="unreachable"),
+            StoreStatus(store="newegg", store_label="Newegg",
+                        market=Market.GLOBAL, ok=False,
+                        error="cannot resolve www.newegg.com", error_kind="unreachable"),
+        ],
+    )
+
+
+def test_a_run_where_every_store_failed_is_not_recorded(db):
+    """A misconfigured proxy took every store down at once. Recording that
+    snapshot reported all four tracked listings as gone, and the next good run
+    would have reported them all as new — a fortnight of invented history from
+    one flat tyre."""
+    history.record(response([offer(2150), offer(3200, "https://a.ae/dp/B")]), db_path=db)
+    assert history.record(failed_response(), db_path=db) is None
+
+    records = history.list_searches(db_path=db)
+    assert records[0].checks == 1, "the broken run must not count as a check"
+    assert records[0].latest_best_aed == 2150, "prices must be left as they were"
+
+
+def test_a_genuine_empty_result_is_still_recorded(db):
+    """Stores that answered and had nothing is a real observation."""
+    from app.models import StoreStatus
+
+    empty = SearchResponse(
+        query="rtx 4070", offers=[],
+        stores=[StoreStatus(store="amazon_ae", store_label="Amazon.ae",
+                            market=Market.LOCAL, ok=True, offer_count=0)],
+    )
+    assert history.record(empty, db_path=db) is not None
+    assert history.list_searches(db_path=db)[0].checks == 1
+
+
+def test_total_failure_detection():
+    from app.history import is_total_failure
+
+    assert is_total_failure(failed_response())
+    assert not is_total_failure(response([offer(2150)]))
+    # No stores at all (a synthetic response) is not evidence of failure.
+    assert not is_total_failure(SearchResponse(query="x", offers=[], stores=[]))

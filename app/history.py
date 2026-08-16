@@ -176,18 +176,38 @@ class PriceChanges:
 
 # ------------------------------------------------------------------ write ---
 
+def is_total_failure(response: SearchResponse) -> bool:
+    """True when nothing came back because nothing could be reached.
+
+    "No offers because the stores had none" and "no offers because the network
+    was down" look identical in the result, but only the first is an
+    observation about prices.
+    """
+    return not response.offers and bool(response.stores) and not any(
+        s.ok for s in response.stores
+    )
+
+
 def record(
     response: SearchResponse,
     *,
     market: str = "all",
     include_used: bool = False,
     db_path: Path | str | None = None,
-) -> int:
+) -> int | None:
     """Save this result as the newest snapshot of its search. Returns search id.
 
-    A search with no offers is still recorded: "the store had nothing today"
-    is a real observation, and dropping it would silently break the timeline.
+    A search that legitimately found nothing is still recorded: "the stores had
+    none today" is a real observation, and dropping it would break the timeline.
+
+    A search where every store *failed* is not recorded at all. Storing it would
+    write a snapshot with no offers, so the next comparison would report every
+    tracked listing as gone and the one after that would report them all as new
+    — a fortnight of invented price history from one flat tyre.
     """
+    if is_total_failure(response):
+        return None
+
     with connect(db_path) as conn:
         now = _now()
         conn.execute(

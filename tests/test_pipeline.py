@@ -453,3 +453,51 @@ def test_health_reports_proxy_state_without_leaking_credentials(client):
     assert "proxy" in body
     assert set(body["proxy"]) == {"configured", "server", "authenticated", "used_by"}
     assert "password" not in str(body["proxy"]).lower()
+
+
+@pytest.mark.parametrize("raw", [
+    "http://USER:PASS@gateway.provider.com:7000",
+    "http://<user>:<pass>@<your-proxy-host>:<port>",
+    "http://username:password@proxy-host:8080",
+])
+def test_placeholder_proxies_are_ignored_rather_than_attempted(raw, monkeypatch):
+    """Pasting the documented example verbatim points every request at a host
+    that does not exist. That fails identically to having no internet, takes
+    every store down at once, and reads as a catastrophic outage."""
+    import importlib
+
+    monkeypatch.setenv("SCRAPER_PROXY", raw)
+    import app.browser as browser_module
+    import app.config as config_module
+    import app.net as net_module
+
+    importlib.reload(config_module)
+    importlib.reload(browser_module)
+    importlib.reload(net_module)
+    try:
+        assert browser_module.proxy_settings() is None
+        assert net_module._usable_proxy() is None
+    finally:
+        monkeypatch.delenv("SCRAPER_PROXY", raising=False)
+        for module in (config_module, browser_module, net_module):
+            importlib.reload(module)
+
+
+def test_a_real_proxy_is_still_used(monkeypatch):
+    import importlib
+
+    monkeypatch.setenv("SCRAPER_PROXY", "http://u:p@gate.brightdata.io:22225")
+    import app.browser as browser_module
+    import app.config as config_module
+    import app.net as net_module
+
+    importlib.reload(config_module)
+    importlib.reload(browser_module)
+    importlib.reload(net_module)
+    try:
+        assert browser_module.proxy_settings()["server"] == "http://gate.brightdata.io:22225"
+        assert net_module._usable_proxy()
+    finally:
+        monkeypatch.delenv("SCRAPER_PROXY", raising=False)
+        for module in (config_module, browser_module, net_module):
+            importlib.reload(module)

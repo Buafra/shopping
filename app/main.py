@@ -137,7 +137,15 @@ async def api_history_recheck(search_id: int) -> JSONResponse:
         log.exception("recheck failed for #%s", search_id)
         raise HTTPException(status_code=502, detail=f"recheck failed: {exc}") from exc
 
-    history.record(response, market=record.market, include_used=record.include_used)
+    stored = history.record(
+        response, market=record.market, include_used=record.include_used
+    )
+    if stored is None:
+        raise HTTPException(
+            status_code=502,
+            detail="every store failed, so the re-check was discarded rather "
+                   "than recorded as a price change",
+        )
     changes = history.compare(search_id)
     return JSONResponse({
         "result": response.model_dump(mode="json"),

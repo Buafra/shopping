@@ -194,6 +194,10 @@ def render_changes(response, args) -> None:
     search_id = history.record(
         response, market=args.market, include_used=args.include_used
     )
+    if search_id is None:
+        out(f"{YELLOW}note:{RESET} every store failed, so this run was not "
+            f"recorded — tracked prices are left as they were.\n")
+        return
     changes = history.compare(search_id)
     if changes is None or changes.is_first_run:
         out(f"{DIM}Saved as search #{search_id}. "

@@ -47,6 +47,14 @@ def base_headers(locale: str = "en-AE,en;q=0.9,ar;q=0.8") -> dict[str, str]:
     }
 
 
+def _usable_proxy() -> str | None:
+    """The configured proxy, unless it is still the documented placeholder."""
+    from .browser import proxy_looks_unconfigured
+
+    raw = SETTINGS.proxy_url
+    return None if proxy_looks_unconfigured(raw) else raw
+
+
 async def get_client() -> httpx.AsyncClient:
     global _client
     if _client is None or _client.is_closed:
@@ -56,7 +64,7 @@ async def get_client() -> httpx.AsyncClient:
                     timeout=httpx.Timeout(SETTINGS.request_timeout),
                     follow_redirects=True,
                     limits=httpx.Limits(max_connections=32, max_keepalive_connections=16),
-                    proxy=SETTINGS.proxy_url,
+                    proxy=_usable_proxy(),
                     http2=False,
                 )
     return _client

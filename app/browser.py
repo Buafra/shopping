@@ -21,6 +21,20 @@ from .config import SETTINGS, USER_AGENTS
 log = logging.getLogger(__name__)
 
 
+# Words that only appear in a proxy URL nobody has filled in yet. Pasting the
+# documented example verbatim points every request at a host that does not
+# exist, which fails identically to having no internet at all.
+PROXY_PLACEHOLDERS = (
+    "user:pass", "username:password", "your-proxy", "yourproxy",
+    "provider.com", "example.com", "example.net", "changeme",
+    "host:port", "proxy-host",
+)
+
+
+def proxy_looks_unconfigured(raw: str | None) -> bool:
+    return bool(raw) and any(token in raw.lower() for token in PROXY_PLACEHOLDERS)
+
+
 def proxy_settings() -> dict | None:
     """Translate SCRAPER_PROXY into Playwright's proxy option.
 
@@ -30,6 +44,13 @@ def proxy_settings() -> dict | None:
     """
     raw = SETTINGS.proxy_url
     if not raw:
+        return None
+
+    if proxy_looks_unconfigured(raw):
+        log.warning(
+            "SCRAPER_PROXY still contains placeholder text (%s) — ignoring it "
+            "and going direct. Replace it with a real proxy, or unset it.", raw
+        )
         return None
 
     parsed = urlparse(raw)

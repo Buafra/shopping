@@ -69,6 +69,14 @@ def _diagnose_total_failure(statuses: list[StoreStatus]) -> str:
     everywhere = share == len(statuses)
 
     if dominant == "unreachable":
+        if SETTINGS.proxy_url:
+            host = SETTINGS.proxy_url.split("@")[-1].rstrip("/")
+            return (
+                f"No store could be reached, and SCRAPER_PROXY is set to {host}. "
+                f"A proxy that cannot be resolved or reached blocks every store at "
+                f"once, exactly like this. Verify the host and credentials, or "
+                f"unset SCRAPER_PROXY to go direct."
+            )
         return (
             "No store could be reached at all"
             + (" — every single one failed to connect, which points at this "
