@@ -283,3 +283,63 @@ def test_searching_for_a_system_still_finds_systems():
 
 def test_cpu_queries_are_unaffected():
     assert relevance("ryzen 7 7800x3d", "AMD Ryzen 7 7800X3D 8-Core Processor") == 1.0
+
+
+# ---- the four wrong rows a live Noon search returned ---------------------
+#
+# Noon started answering and immediately shipped a 4070 Ti, a prebuilt and two
+# laptops into an "rtx 4070" comparison. Each slipped past a different hole.
+
+def test_a_variant_suffix_glued_to_a_capacity_is_still_a_variant():
+    """"RTX 4070 Ti 12GB" used to normalise to `rtx4070` + `ti12gb`.
+
+    The variant check looks for a bare "ti" after the model number, so gluing
+    the suffix onto the capacity behind it hid the mismatch entirely and a
+    4070 Ti answered a 4070 query at AED 3,000."""
+    from app.matching import normalise_models, variant_mismatch
+
+    assert "ti12gb" not in normalise_models("RTX 4070 Ti 12GB XLR8")
+    assert variant_mismatch("rtx 4070", "PNY GeForce RTX 4070 Ti 12GB XLR8")
+    assert relevance(
+        "rtx 4070", "PNY GeForce RTX 4070 Ti 12GB XLR8 Gaming Verto Epic-X RGB"
+    ) == 0.0
+
+
+def test_a_cpu_in_the_title_marks_a_whole_machine():
+    """This one never says "PC" in a way the term list caught — it says
+    "PC Gaming", reversed — but it does quote a CPU, and a graphics card does
+    not come with a Core i5."""
+    assert relevance(
+        "rtx 4070", "1STPLAYER PC Gaming super Pro TMD , Core i5-12400F , RTX 4070"
+    ) == 0.0
+
+
+@pytest.mark.parametrize("title", [
+    "ASUS Tuf FX507V Gaming (Upgraded Version) Laptop With RTX 4070",
+    "MSI Stealth A16 AI+ Gaming Laptop AMD Ryzen AI 9 HX RTX 4070",
+    "Lenovo LOQ 15 Notebook RTX 4070 16GB",
+])
+def test_a_laptop_containing_the_card_is_not_the_card(title):
+    """Mobile RTX 4070 silicon runs at a different power limit than the desktop
+    card — this is a different product, not merely different packaging."""
+    assert relevance("rtx 4070", title) == 0.0
+
+
+@pytest.mark.parametrize("title", [
+    "MSI VENTUS GeForce RTX 4070 2X E 12G OC NVIDIA 12 GB GDDR6X",
+    "GIGABYTE WINDFORCE GeForce RTX 4070 12GB GDDR6X PCIe 4.0",
+])
+def test_real_cards_from_the_same_search_survive(title):
+    """The fix must not take the genuine cards down with the four bad rows."""
+    assert relevance("rtx 4070", title) == 1.0
+
+
+def test_asking_for_a_laptop_still_finds_laptops():
+    assert relevance(
+        "gaming laptop rtx 4070", "MSI Stealth Gaming Laptop RTX 4070"
+    ) == 1.0
+
+
+def test_asking_for_a_cpu_is_not_read_as_a_prebuilt():
+    """The CPU marker must only fire when the query did not name the CPU."""
+    assert relevance("core i5 12400f", "Intel Core i5-12400F Desktop Processor") == 1.0

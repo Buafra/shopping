@@ -56,6 +56,11 @@ _MODEL_JOIN = re.compile(r"\b([a-z]{1,4})[\s\-_/]+(\d{2,}[a-z0-9]*)")
 # rather than naming a model. Without this, "iPhone 15 Pro 256GB" collapses
 # to "pro256gb" and loses both the variant and the capacity.
 NOT_MODEL_PREFIXES = {
+    # Variant suffixes must never be glued to the capacity that follows them:
+    # "RTX 4070 Ti 12GB" would become "rtx4070" + "ti12gb", and the variant
+    # check — which looks for a bare "ti" after the model — would never see it,
+    # so a 4070 Ti answered a 4070 query.
+    "ti", "super", "xt", "xtx", "fe", "oc",
     "pro", "max", "plus", "air", "mini", "lite", "ultra", "gen", "size",
     "set", "pack", "kit", "box", "new", "top", "all", "up", "to", "of",
     "cm", "mm", "inch", "in", "ml", "l", "kg", "g", "w", "v", "hz", "gb",
@@ -137,10 +142,24 @@ PRODUCT_MODEL = re.compile(
 
 # A listing selling a whole system rather than the part that was searched for.
 SYSTEM_TERMS = {
-    "gaming pc", "gaming desktop", "gaming rig", "gaming tower",
+    "gaming pc", "pc gaming", "gaming desktop", "gaming rig", "gaming tower",
     "desktop pc", "desktop computer", "pc desktop", "tower pc",
     "prebuilt", "pre-built", "barebone", "workstation", "mini pc",
     "all-in-one", "complete pc", "full set", "gaming bundle",
+    # A laptop containing the card is not the card. Mobile GPUs are different
+    # silicon at different power limits, so this is a product difference, not
+    # merely a packaging one.
+    "laptop", "notebook", "gaming laptop",
+}
+
+# A processor named alongside the part you searched for means a built machine.
+# This catches systems whose titles never use the word "PC" — "1STPLAYER PC
+# Gaming super Pro TMD, Core i5-12400F, RTX 4070" reads as a graphics card
+# until you notice it also has a CPU.
+CPU_MARKERS = {
+    "core i3", "core i5", "core i7", "core i9", "core ultra",
+    "ryzen 3", "ryzen 5", "ryzen 7", "ryzen 9", "ryzen ai",
+    "celeron", "pentium", "xeon", "threadripper",
 }
 
 
@@ -161,10 +180,15 @@ def lists_multiple_products(query: str, title: str) -> bool:
 
 
 def looks_like_a_system(query: str, title: str) -> bool:
-    """A prebuilt PC containing the part is not the part."""
+    """A prebuilt PC or laptop containing the part is not the part."""
     title_l = (title or "").lower()
     query_l = (query or "").lower()
-    return any(term in title_l and term not in query_l for term in SYSTEM_TERMS)
+
+    if any(term in title_l and term not in query_l for term in SYSTEM_TERMS):
+        return True
+    # A CPU quoted next to the queried part means a whole machine — unless the
+    # query itself named a CPU, in which case that is what was asked for.
+    return any(cpu in title_l and cpu not in query_l for cpu in CPU_MARKERS)
 
 
 def model_tokens(text: str) -> set[str]:
