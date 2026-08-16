@@ -621,3 +621,64 @@ def test_ebay_prefers_its_known_layout():
     cannot infer, so it must win when it is present."""
     offers = ebay()._parse(load("ebay_search.html"), limit=6)
     assert any(o.shipping_is_estimate is False for o in offers)
+
+
+# ---- a challenge page is not a markup change ----------------------------
+
+ALIEXPRESS_CAPTCHA = (
+    "<html><head><title>Captcha Interception</title></head>"
+    "<body><div id='baxia-punish'>Please verify</div></body></html>"
+)
+EBAY_INTERSTITIAL = (
+    "<html><head><title>Pardon Our Interruption...</title></head>"
+    "<body>As you were browsing something about your browser made us think "
+    "you were a bot.</body></html>"
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("factory,page,expected", [
+    ("aliexpress", ALIEXPRESS_CAPTCHA, "CAPTCHA challenge"),
+    ("ebay", EBAY_INTERSTITIAL, "bot-detection interstitial"),
+])
+async def test_a_bot_wall_is_reported_as_blocked_not_as_a_parser_problem(
+    factory, page, expected, monkeypatch
+):
+    """Both stores answered HTTP 200 with a challenge screen. Calling that
+    "markup has probably changed, check your selectors" sent two rounds of
+    debugging at parsers that were never the problem."""
+    from app.providers import build
+
+    provider = build(factory)
+
+    async def serve_challenge(self, query, limit):
+        return self._parse(page, limit)
+
+    monkeypatch.setattr(type(provider), "search_http", serve_challenge)
+    monkeypatch.setattr(type(provider), "search_browser", serve_challenge)
+
+    offers, status = await provider.run("sony wh-1000xm5", 5)
+
+    assert offers == []
+    assert status.error_kind == "blocked", status.error
+    assert expected in status.error
+    assert "parser" not in status.error.lower() or "no parser change" in status.error
+
+
+@pytest.mark.asyncio
+async def test_a_genuine_markup_change_is_still_called_a_parser_problem(monkeypatch):
+    """The blocked verdict must not swallow real selector rot."""
+    from app.providers import build
+
+    provider = build("ebay")
+    redesigned = "<html><head><title>Sony WH-1000XM5 | eBay</title></head><body><div>x</div></body></html>"
+
+    async def serve(self, query, limit):
+        return self._parse(redesigned, limit)
+
+    monkeypatch.setattr(type(provider), "search_http", serve)
+    monkeypatch.setattr(type(provider), "search_browser", serve)
+
+    _, status = await provider.run("sony wh-1000xm5", 5)
+    assert status.error_kind == "parse"
+    assert "selectors" in status.error

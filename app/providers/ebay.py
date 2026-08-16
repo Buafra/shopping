@@ -64,6 +64,7 @@ class EbayProvider(Provider):
         return self._parse(html, limit)
 
     def _parse(self, html: str, limit: int) -> list[Offer]:
+        self.last_html = html
         offers = self._parse_cards(html, limit)
         # eBay has been rotating between `.s-item` and `.s-card` layouts; when
         # neither matches, fall back to structure rather than reporting the

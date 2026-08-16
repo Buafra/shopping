@@ -294,6 +294,48 @@ def absolutise(href: str | None, origin: str) -> str | None:
     return origin.rstrip("/") + href
 
 
+# Pages a store serves *instead* of results when it thinks you are a bot.
+# These arrive as HTTP 200 with ordinary-looking HTML, so nothing upstream
+# notices; the only tell is what the page says.
+BOT_WALL_MARKERS: list[tuple[str, str]] = [
+    ("captcha interception", "CAPTCHA challenge"),
+    ("pardon our interruption", "bot-detection interstitial"),
+    ("captcha", "CAPTCHA challenge"),
+    ("are you a human", "bot challenge"),
+    ("verify you are human", "bot challenge"),
+    ("unusual traffic", "rate-limit challenge"),
+    ("access denied", "access-denied page"),
+    ("cf-browser-verification", "Cloudflare interstitial"),
+    ("just a moment", "Cloudflare interstitial"),
+    ("attention required", "Cloudflare block"),
+    ("px-captcha", "PerimeterX challenge"),
+    ("/_incapsula_", "Imperva challenge"),
+    ("error page | ebay", "eBay error page"),
+]
+
+
+def detect_bot_wall(html: str | None) -> str | None:
+    """Name the challenge a page represents, or None if it looks like content.
+
+    Only the head and the page title are inspected: the words "captcha" and
+    "access denied" appear legitimately in product listings and help pages
+    further down, and matching those would suppress real results.
+    """
+    if not html:
+        return None
+
+    head = html[:6000].lower()
+    title = ""
+    match = re.search(r"<title[^>]*>(.*?)</title>", head, re.S)
+    if match:
+        title = match.group(1).strip()
+
+    for marker, meaning in BOT_WALL_MARKERS:
+        if marker in title or marker in head[:2500]:
+            return meaning
+    return None
+
+
 def clean_text(value: str | None) -> str:
     if not value:
         return ""

@@ -228,7 +228,7 @@ pretending otherwise.**
   | Kind | Means | What to do |
   |---|---|---|
   | `unreachable` | no route, DNS or proxy refusal | fix your network / `SCRAPER_PROXY` |
-  | `blocked` | store refused automated traffic (403/429) | use a residential IP |
+  | `blocked` | refused as automated traffic — a 403/429, **or a CAPTCHA or interstitial served as a normal 200** | use a residential IP or `SCRAPER_PROXY`; no parser change helps |
   | `timeout` | store too slow to answer | raise `REQUEST_TIMEOUT` |
   | `parse` | page loaded fine, nothing parsed out | the store redesigned — update that provider's selectors |
   | `no_results` | store genuinely has no match | broaden the query |
@@ -257,10 +257,10 @@ fix on its own:
 | Store | Result |
 |---|---|
 | **Amazon.ae** | works — offers with ratings and review counts, over plain HTTP in ~1s |
-| Newegg | works — good coverage for PC parts |
-| Amazon.com | works |
-| AliExpress | now parsed structurally; previously "fetched but nothing parsed" |
-| eBay | answered 403 to a cold search; session priming added |
+| **Newegg** | works |
+| **Amazon.com** | works |
+| AliExpress | serves a **CAPTCHA** ("Captcha Interception"). Worked for the first few runs, then rate-limited into a permanent challenge |
+| eBay | serves an **Imperva interstitial** ("Pardon Our Interruption"). Session priming got past the 403 only to land here |
 | Noon UAE | no response at all, and the browser navigation is aborted — blocking at connection level, not by status code. Given a short 8s leash so it cannot dominate a search; disable it or use `SCRAPER_PROXY` |
 | Sharaf DG | serves a **CAPTCHA** to headless browsers; page loads with zero prices in it |
 | **Carrefour UAE** | works — 6 offers in ~2.5s by parsing the search page (its JSON API is retired) |
@@ -274,7 +274,17 @@ one product link, a price and a plausible title. A block holding several
 product links is skipped, because one price shared between them belongs to
 none of them.
 
-Sharaf DG is different. A CAPTCHA is a deliberate "no", and working around it
+Four of the eight stores now answer with a challenge rather than results:
+Noon (connection-level), Sharaf DG, AliExpress and eBay (CAPTCHA or
+interstitial). These arrive as ordinary HTTP 200 responses with well-formed
+HTML, so they are detected by what the page *says* — the app reports them as
+`blocked`, not as a markup change, because no selector fixes a CAPTCHA.
+
+Repeated searching is what triggers most of them: AliExpress answered
+normally for the first few runs and only then began challenging. Space out
+`--recheck all` rather than polling.
+
+Sharaf DG is the same story. A CAPTCHA is a deliberate "no", and working around it
 is out of scope here — the honest fixes are an official/affiliate feed or a
 commercial scraping proxy via `SCRAPER_PROXY`. Until then, turn it off so it
 stops costing every search the full timeout budget:
@@ -319,7 +329,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 253 tests
+python -m pytest -q      # 256 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in

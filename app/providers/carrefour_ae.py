@@ -83,6 +83,7 @@ class CarrefourProvider(Provider):
     def _parse(self, html: str, limit: int) -> list[Offer]:
         """Carrefour's storefront is utility-CSS only — no class name identifies
         a product — so cards are located by structure instead."""
+        self.last_html = html
         cards = parse_cards(html, origin=ORIGIN, link_match="/p/", max_cards=limit * 2)
         return [
             self.make_offer(

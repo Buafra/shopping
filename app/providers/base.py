@@ -24,7 +24,7 @@ from ..browser import BrowserUnavailable
 from ..browser import describe_error as describe_browser_error
 from ..config import SETTINGS, StoreSpec
 from ..models import Offer, StoreStatus
-from ..net import FetchError
+from ..net import FetchError, detect_bot_wall
 
 log = logging.getLogger(__name__)
 
@@ -33,8 +33,14 @@ class Provider(abc.ABC):
     spec: StoreSpec
     origin: str
 
+    #: The last page body this provider fetched. Kept so that an empty result
+    #: can be told apart from a challenge screen served in place of one — both
+    #: arrive as HTTP 200 with well-formed HTML.
+    last_html: str | None = None
+
     def __init__(self, spec: StoreSpec) -> None:
         self.spec = spec
+        self.last_html = None
 
     # -- to implement -------------------------------------------------------
 
@@ -52,8 +58,9 @@ class Provider(abc.ABC):
     def q(query: str) -> str:
         return quote_plus(query.strip())
 
-    @staticmethod
-    def dom(html: str) -> HTMLParser:
+    def dom(self, html: str) -> HTMLParser:
+        """Parse a page, remembering it so failures can be explained."""
+        self.last_html = html
         return HTMLParser(html)
 
     def make_offer(self, **kwargs) -> Offer:
@@ -135,15 +142,26 @@ class Provider(abc.ABC):
         elapsed = int((time.perf_counter() - started) * 1000)
 
         if not offers and error is None:
-            # The page came back fine but nothing parsed out of it. That is a
-            # different problem from a network failure, and pointing at the
-            # parser rather than the connection saves real debugging time.
-            error, error_kind = (
-                ("page fetched but no listings parsed — this store's markup has "
-                 "probably changed, check its provider selectors", "parse")
-                if fetch_succeeded
-                else ("no matching results found", "no_results")
-            )
+            # An empty result has three quite different causes, and naming the
+            # wrong one sends whoever debugs it down the wrong path. A store
+            # that answered 200 with a CAPTCHA looks exactly like a store whose
+            # markup changed — until you read the page, which is what
+            # detect_bot_wall does.
+            challenge = detect_bot_wall(self.last_html)
+            if challenge:
+                error, error_kind = (
+                    f"served a {challenge} instead of results — the store is "
+                    f"blocking automated access, so no parser change will help",
+                    "blocked",
+                )
+            elif fetch_succeeded:
+                error, error_kind = (
+                    "page fetched but no listings parsed — this store's markup "
+                    "has probably changed, check its provider selectors",
+                    "parse",
+                )
+            else:
+                error, error_kind = ("no matching results found", "no_results")
 
         status = StoreStatus(
             store=self.spec.key,
