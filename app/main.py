@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -26,9 +27,24 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await fx.refresh_rates()
+    # Warm the FX cache in the background rather than awaiting it.
+    #
+    # uvicorn does not accept connections until startup returns, and
+    # refresh_rates() goes to the network — so a slow or unreachable FX feed
+    # holds the port shut for the whole request timeout while the launcher has
+    # *already* printed the URL. The browser says "connection refused" and the
+    # app looks broken when it is merely starting.
+    #
+    # Nothing depends on this finishing: every search refreshes rates itself,
+    # and there are built-in fallbacks (the AED/USD peg is fixed anyway).
+    warm = asyncio.create_task(fx.refresh_rates())
     log.info("ready — %d stores registered", len(STORES))
+
     yield
+
+    warm.cancel()
+    with suppress(asyncio.CancelledError):
+        await warm
     await net.close_client()
     await browser.close_browser()
 

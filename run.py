@@ -65,7 +65,13 @@ def main() -> int:
 
     port = pick_port(args.host, args.port)
 
-    print(f"\n  Shopping Scout -> http://{args.host}:{port}\n")
+    print(f"\n  Shopping Scout -> http://{args.host}:{port}")
+    if port != DEFAULT_PORTS[0]:
+        # Easy to miss, and browsing to the 8000 you expected gives a refused
+        # connection that looks exactly like a server that failed to start.
+        print(f"  NOTE: port {DEFAULT_PORTS[0]} was not available — "
+              f"use the address above, not :{DEFAULT_PORTS[0]}")
+    print("  (starting… the page is served once 'Application startup complete' appears)\n")
     uvicorn.run("app.main:app", host=args.host, port=port, reload=args.reload)
     return 0
 

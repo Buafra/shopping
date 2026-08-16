@@ -618,3 +618,94 @@ async def test_asking_for_an_unknown_store_lists_the_real_ones():
 async def test_a_store_outside_the_requested_market_is_explained():
     with pytest.raises(ValueError, match="not in the"):
         await aggregator.search("rtx 4070", stores=["newegg"], markets=[Market.LOCAL])
+
+
+def test_startup_does_not_wait_for_the_fx_feed(monkeypatch):
+    """uvicorn binds no socket until startup returns.
+
+    Awaiting the FX fetch there meant a slow or unreachable rates feed held
+    the port shut for the whole request timeout — while the launcher had
+    already printed the URL. The browser said "connection refused" and the app
+    looked dead when it was merely starting.
+    """
+    import asyncio
+    import time
+
+    from app import fx, main
+
+    started = asyncio.Event()
+
+    async def never_finishes():
+        started.set()
+        await asyncio.sleep(30)
+        return {}, "live"
+
+    monkeypatch.setattr(fx, "refresh_rates", never_finishes)
+
+    async def exercise():
+        begin = time.perf_counter()
+        async with main.lifespan(main.app):
+            elapsed = time.perf_counter() - begin
+            # The warm-up must be running, but must not have been waited on.
+            await asyncio.sleep(0)
+            assert started.is_set(), "FX warm-up never started"
+            assert elapsed < 1.0, f"startup blocked for {elapsed:.1f}s"
+
+    asyncio.run(exercise())
+
+
+def test_shutdown_cancels_the_fx_warmup(monkeypatch):
+    """A warm-up left running past shutdown is a pending-task warning at best
+    and a process that will not exit at worst."""
+    import asyncio
+
+    from app import fx, main
+
+    cancelled = asyncio.Event()
+
+    async def slow():
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return {}, "live"
+
+    monkeypatch.setattr(fx, "refresh_rates", slow)
+
+    async def exercise():
+        async with main.lifespan(main.app):
+            await asyncio.sleep(0)
+        assert cancelled.is_set(), "FX warm-up outlived shutdown"
+
+    asyncio.run(exercise())
+
+
+def test_a_disabled_browser_is_never_launched():
+    """The health probe used to start a real Chromium even with the fallback
+    switched off, then report it as available — seconds of startup and a
+    process to clean up, for a browser nothing was allowed to use.
+
+    The test suite runs with the fallback off (see conftest), so this asserts
+    against the real configuration rather than a patched one."""
+    import asyncio
+
+    import app.browser as browser_module
+    from app.browser import BrowserUnavailable
+
+    assert browser_module.SETTINGS.use_browser_fallback is False
+
+    with pytest.raises(BrowserUnavailable, match="disabled by configuration"):
+        asyncio.run(browser_module._get_browser())
+
+    # Nothing was started, so there is nothing to shut down.
+    assert browser_module._browser is None
+    assert browser_module._playwright is None
+
+
+def test_health_reports_a_disabled_browser_honestly(client):
+    body = client.get("/api/health").json()
+
+    assert body["browser_fallback"]["enabled"] is False
+    assert body["browser_fallback"]["ok"] is False
+    assert "disabled" in body["browser_fallback"]["detail"]

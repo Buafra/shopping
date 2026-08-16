@@ -147,6 +147,13 @@ def describe_error(exc: Exception, host: str = "") -> str:
 
 async def _get_browser():
     global _playwright, _browser
+    # The switch belongs here rather than only in render(): every other caller
+    # — the health probe included — was launching a real Chromium even with the
+    # fallback turned off, then reporting it as available. Starting a browser
+    # nobody is allowed to use costs seconds and leaves a process to clean up.
+    if not SETTINGS.use_browser_fallback:
+        raise BrowserUnavailable("browser fallback disabled by configuration")
+
     if _browser is not None and _browser.is_connected():
         return _browser
 
