@@ -264,9 +264,9 @@ def test_registry_builds_every_configured_store():
         assert build(key).spec.key == key
 
 
-def test_carrefour_tries_each_endpoint_before_giving_up(monkeypatch):
-    """A retired Carrefour API version answers 403, not 404, so one hard-coded
-    endpoint takes the whole store down. Every candidate must be attempted."""
+def test_carrefour_tries_every_endpoint_then_the_search_page(monkeypatch):
+    """Each API version is attempted, and when all are dead the ordinary
+    search page — which still returns 200 — is the last resort."""
     import asyncio
 
     from app.net import FetchError
@@ -276,15 +276,47 @@ def test_carrefour_tries_each_endpoint_before_giving_up(monkeypatch):
 
     async def fake_fetch(url, **kwargs):
         tried.append(url)
-        raise FetchError(f"HTTP 403 from {url}", kind="blocked")
+        raise FetchError(f"HTTP 404 from {url}", kind="http_error")
 
     monkeypatch.setattr(module, "fetch", fake_fetch)
 
     with pytest.raises(FetchError):
         asyncio.run(module.make().search_http("headphones", 5))
 
-    assert len(tried) == len(module.API_CANDIDATES)
     assert tried[0] == module.API
+    for candidate in module.API_CANDIDATES:
+        assert candidate in tried
+    assert any("/search?keyword=" in url for url in tried), "search page not tried"
+
+
+def test_carrefour_parses_the_search_page_when_the_api_is_dead(monkeypatch):
+    """The live failure mode: every API version 404s, the page still works."""
+    import asyncio
+
+    from app.net import FetchError
+    from app.providers import carrefour_ae as module
+
+    page = """<div class="relative gap-2xs pl-md">
+        <a href="/mafuae/en/sony-xm5/p/10123" class="flex">
+          <span data-testid="product_name">Sony WH-1000XM5 Wireless</span></a>
+        <span data-testid="product_price">AED 1,279.00</span></div>"""
+
+    class FakeResponse:
+        text = page
+        def json(self): raise ValueError("not json")
+
+    async def fake_fetch(url, **kwargs):
+        if "/api/" in url:
+            raise FetchError(f"HTTP 404 from {url}", kind="http_error")
+        return FakeResponse()
+
+    monkeypatch.setattr(module, "fetch", fake_fetch)
+
+    offers = asyncio.run(module.make().search_http("sony wh-1000xm5", 5))
+    assert len(offers) == 1
+    assert offers[0].price == 1279.00
+    assert offers[0].currency == "AED"
+    assert offers[0].url.endswith("/mafuae/en/sony-xm5/p/10123")
 
 
 def test_carrefour_stops_at_the_first_endpoint_that_answers(monkeypatch):

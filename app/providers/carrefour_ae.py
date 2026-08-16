@@ -1,9 +1,15 @@
 """Carrefour UAE scraper.
 
-Carrefour's storefront is powered by a public JSON search endpoint, which is
-both faster and far more stable than parsing their React output. The endpoint
-needs a store identifier and a language header; if it changes shape we fall
-back to rendering the search page.
+Carrefour has a private JSON search endpoint that is pleasant to parse but is
+versioned and retired without notice — every version we knew now answers 404.
+The ordinary search page, however, still renders products server-side and
+returns 200 to a plain HTTP request, so that is the dependable path.
+
+That page is built with utility-first CSS: markup like
+`class="relative gap-2xs md:gap-1.5xs pl-md"` says how something looks and
+nothing about what it is. There is no class worth selecting on, so cards are
+located structurally instead (see app/structural.py). The API is still tried
+first, since when it works it gives cleaner data.
 """
 
 from __future__ import annotations
@@ -14,6 +20,7 @@ from ..browser import render
 from ..config import STORES
 from ..models import Offer
 from ..net import clean_text, fetch, parse_int, parse_price, parse_rating
+from ..structural import parse_cards
 from .base import Provider
 
 ORIGIN = "https://www.carrefouruae.com"
@@ -41,18 +48,53 @@ class CarrefourProvider(Provider):
         return f"{ORIGIN}/mafuae/en/v4/search?keyword={self.q(query)}"
 
     async def search_http(self, query: str, limit: int) -> list[Offer]:
+        """Try the JSON API, then fall back to the search page itself.
+
+        The API is versioned and the versions we knew now answer 404, but the
+        ordinary search page still renders products server-side over plain
+        HTTP — no browser needed. Reading that page is slower to parse and
+        faster to run than launching Chromium.
+        """
         # `API` is honoured first so a patched or pinned endpoint still wins.
         endpoints = [API] + [u for u in API_CANDIDATES if u != API]
         last_error: Exception | None = None
 
         for endpoint in endpoints:
             try:
-                return await self._search_endpoint(endpoint, query, limit)
+                offers = await self._search_endpoint(endpoint, query, limit)
+                if offers:
+                    return offers
             except Exception as exc:
                 last_error = exc
                 continue
 
-        raise last_error if last_error else RuntimeError("no Carrefour endpoint tried")
+        try:
+            return await self._search_page(query, limit)
+        except Exception as exc:
+            raise last_error or exc
+
+    async def _search_page(self, query: str, limit: int) -> list[Offer]:
+        resp = await fetch(
+            self._page_url(query),
+            headers={"Accept-Language": "en-AE,en;q=0.9"},
+        )
+        return self._parse(resp.text, limit)
+
+    def _parse(self, html: str, limit: int) -> list[Offer]:
+        """Carrefour's storefront is utility-CSS only — no class name identifies
+        a product — so cards are located by structure instead."""
+        cards = parse_cards(html, origin=ORIGIN, link_match="/p/", max_cards=limit * 2)
+        return [
+            self.make_offer(
+                title=card.title,
+                url=card.url,
+                image=card.image,
+                price=card.price,
+                rating=card.rating,
+                review_count=card.review_count,
+            )
+            for card in cards
+        ]
 
     async def _search_endpoint(self, endpoint: str, query: str, limit: int) -> list[Offer]:
         resp = await fetch(
@@ -86,8 +128,8 @@ class CarrefourProvider(Provider):
         return self._parse_json(resp.json(), limit)
 
     async def search_browser(self, query: str, limit: int) -> list[Offer]:
-        html = await render(self._page_url(query), wait_for="[data-testid='product_name']")
-        return self._parse_dom(html, limit)
+        html = await render(self._page_url(query), wait_for="a[href*='/p/']")
+        return self._parse(html, limit)
 
     def _parse_json(self, payload: Any, limit: int) -> list[Offer]:
         products = []
@@ -159,23 +201,6 @@ class CarrefourProvider(Provider):
 
         return offers
 
-    def _parse_dom(self, html: str, limit: int) -> list[Offer]:
-        tree = self.dom(html)
-        offers: list[Offer] = []
-        for card in tree.css("[data-testid='product_card'], li[class*='product']"):
-            name = card.css_first("[data-testid='product_name'], a[href*='/p/']")
-            price_node = card.css_first("[data-testid='product_price'], [class*='price']")
-            link = card.css_first("a[href*='/p/']")
-            title = clean_text(name.text() if name else "")
-            price = parse_price(price_node.text() if price_node else None)
-            href = link.attributes.get("href") if link else None
-            if not title or price is None or not href:
-                continue
-            url = href if href.startswith("http") else ORIGIN + href
-            offers.append(self.make_offer(title=title, url=url, price=price))
-            if len(offers) >= limit * 2:
-                break
-        return offers
 
 
 def make() -> CarrefourProvider:

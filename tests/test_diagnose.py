@@ -24,7 +24,7 @@ def test_summary_reports_dead_selectors_and_suggests_the_real_one(capsys):
 
     assert "0 x  div.product-item" in out, "must show the current selectors matching nothing"
     assert "provider parsed  : 0 raw -> 0 after dedup" in out
-    assert "sdg-product-tile" in out, "must surface the real card class"
+    assert "/product/" in out, "must surface the product-link shape"
 
 
 def test_summary_flags_a_bot_wall(capsys):
@@ -32,7 +32,7 @@ def test_summary_flags_a_bot_wall(capsys):
     out = capsys.readouterr().out
 
     assert "access denied page" in out or "JS-required shell" in out
-    assert "no repeating price-bearing blocks found" in out
+    assert "no price-adjacent links found" in out
 
 
 def test_summary_survives_empty_and_junk_input(capsys):

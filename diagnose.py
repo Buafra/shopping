@@ -19,6 +19,7 @@ import asyncio
 import collections
 import pathlib
 import re
+from urllib.parse import urlsplit
 import sys
 
 from selectolax.parser import HTMLParser
@@ -33,9 +34,31 @@ PRICE_HINT = re.compile(r"(AED|USD|\$|د\.إ|Dhs)\s?[\d,.]{2,}", re.I)
 
 # Classes that appear on almost every page and never identify a product card.
 BORING = re.compile(
-    r"^(row|col|container|wrapper|flex|grid|btn|button|icon|hidden|active|"
-    r"clearfix|sr-only|d-none|text-|mt-|mb-|px-|py-|w-|h-)", re.I
+    r"^(row|col|container|wrapper|btn|button|icon|active|clearfix|sr-only)", re.I
 )
+
+# Tailwind-style utility classes. Sites built this way have no semantic class
+# names at all, so counting classes just yields ".relative" and ".pl-md" — the
+# structure has to be found from links and data attributes instead.
+TAILWIND = re.compile(
+    r"^(?:[a-z0-9.]+:)*"                      # responsive/state prefixes
+    r"(?:relative|absolute|fixed|sticky|static|flex|grid|block|inline|hidden|"
+    r"contents|table|isolate|truncate|uppercase|lowercase|capitalize|italic|"
+    r"underline|antialiased|group|peer|"
+    r"(?:gap|space|p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|ml|mr|w|h|min|max|size|"
+    r"text|bg|border|rounded|shadow|opacity|z|inset|top|bottom|left|right|"
+    r"items|justify|content|self|place|order|basis|grow|shrink|col|row|"
+    r"overflow|whitespace|break|font|leading|tracking|cursor|pointer|select|"
+    r"transition|duration|delay|ease|transform|scale|translate|rotate|skew|"
+    r"object|aspect|list|fill|stroke|ring|divide|placeholder|caret|accent|"
+    r"line|indent|align|float|clear|visible|invisible|sr)"
+    r"(?:-[\w./\[\]%#()-]+)*)$",
+    re.I,
+)
+
+
+def is_utility_class(name: str) -> bool:
+    return bool(BORING.match(name) or TAILWIND.match(name))
 
 
 def summarise(html: str, provider, label: str) -> None:
@@ -93,30 +116,140 @@ def summarise(html: str, provider, label: str) -> None:
     for offer in final[:3]:
         print(f"      - {offer.price:>9,.2f} {offer.currency}  {offer.title[:52]}")
 
-    # Suggest candidates: repeated classes on elements that contain both a link
-    # and something price-shaped. That is what a product card looks like.
-    counter: collections.Counter = collections.Counter()
-    for node in tree.css("div, li, article, section"):
-        classes = (node.attributes.get("class") or "").split()
-        if not classes:
-            continue
-        text = node.text() or ""
-        if not PRICE_HINT.search(text) or not node.css_first("a[href]"):
-            continue
-        if len(text) > 700:          # too big to be one card
-            continue
-        for cls in classes:
-            if not BORING.match(cls) and len(cls) > 3:
-                counter[cls] += 1
+    suggest_structure(tree)
 
-    likely = [(c, n) for c, n in counter.most_common(12) if n >= 2][:8]
-    if likely:
-        print("    candidate card classes (repeated, contain a link + a price):")
-        for cls, count in likely:
-            print(f"      {count:>4} x  .{cls}")
-    else:
-        print("    no repeating price-bearing blocks found "
-              "(page is probably a bot wall or fully client-rendered)")
+
+def href_pattern(href: str) -> str:
+    """Collapse a product URL to its shape: /mafuae/en/sony-abc/p/1234 -> /mafuae/en/*/p/#"""
+    path = urlsplit(href).path
+    parts = [p for p in path.split("/") if p][:5]
+    shaped = []
+    for part in parts:
+        if re.fullmatch(r"[\d][\d\-_]*", part):
+            shaped.append("#")
+        elif len(part) > 20 or re.search(r"\d{4,}", part):
+            shaped.append("*")
+        else:
+            shaped.append(part)
+    return "/" + "/".join(shaped) if shaped else "/"
+
+
+def _ancestors(node, limit: int = 8):
+    current = node.parent
+    depth = 0
+    while current is not None and depth < limit:
+        yield current
+        current = current.parent
+        depth += 1
+
+
+def _describe(node) -> str:
+    """A compact, selector-shaped description of one element."""
+    attrs = node.attributes
+    bits = [node.tag]
+    for key in ("data-testid", "data-qa", "data-test", "itemprop", "id"):
+        if attrs.get(key):
+            bits.append(f'[{key}="{attrs[key]}"]')
+            return "".join(bits)
+    classes = [c for c in (attrs.get("class") or "").split() if not is_utility_class(c)]
+    if classes:
+        bits.append("." + ".".join(classes[:3]))
+    return "".join(bits)
+
+
+def _skeleton(node, depth: int = 0, max_depth: int = 4, lines: list | None = None) -> list:
+    """Structure of a card with the noise stripped, so a parser can be written
+    from it without reading a megabyte of markup."""
+    lines = lines if lines is not None else []
+    if depth > max_depth or len(lines) > 26:
+        return lines
+
+    text = clean(node.text() or "")
+    own = text if not node.child else ""
+    label = _describe(node)
+
+    extra = ""
+    if node.tag == "a" and node.attributes.get("href"):
+        extra = f'  href={node.attributes["href"][:58]}'
+    elif node.tag == "img":
+        src = node.attributes.get("src") or node.attributes.get("data-src") or ""
+        extra = f"  src={src[:48]}"
+    elif own:
+        extra = f"  {own[:52]!r}"
+    elif PRICE_HINT.search(text) and len(text) < 40:
+        extra = f"  {text[:40]!r}"
+
+    lines.append(f"        {'  ' * depth}{label}{extra}")
+    for child in node.iter():
+        _skeleton(child, depth + 1, max_depth, lines)
+    return lines
+
+
+def clean(value: str) -> str:
+    return re.sub(r"\s+", " ", value or "").strip()
+
+
+def suggest_structure(tree) -> None:
+    """Work out how product cards are laid out, without relying on class names.
+
+    Utility-first CSS (Tailwind) leaves no meaningful classes, so the reliable
+    signals are the shape of product links and any data-* test hooks.
+    """
+    # 1. Which link shape repeats, among links that sit near a price?
+    patterns: collections.Counter = collections.Counter()
+    samples: dict[str, object] = {}
+    for link in tree.css("a[href]"):
+        href = link.attributes.get("href") or ""
+        if not href or href.startswith(("#", "javascript:", "mailto:")):
+            continue
+        near_price = any(
+            PRICE_HINT.search(anc.text() or "") and len(anc.text() or "") < 900
+            for anc in _ancestors(link, 4)
+        )
+        if not near_price:
+            continue
+        shape = href_pattern(href)
+        patterns[shape] += 1
+        samples.setdefault(shape, link)
+
+    if not patterns:
+        print("    no price-adjacent links found "
+              "(bot wall, or products are loaded by a later XHR)")
+        return
+
+    print("    product-link shapes (links sitting next to a price):")
+    for shape, count in patterns.most_common(6):
+        print(f"      {count:>4} x  {shape}")
+
+    # 2. Stable test hooks beat any class name.
+    hooks: collections.Counter = collections.Counter()
+    for node in tree.css("[data-testid], [data-qa], [data-test]"):
+        for key in ("data-testid", "data-qa", "data-test"):
+            if node.attributes.get(key):
+                hooks[f'[{key}="{node.attributes[key]}"]'] += 1
+    repeated = [(h, n) for h, n in hooks.most_common(8) if n >= 3]
+    if repeated:
+        print("    repeated data-* hooks (most reliable selectors):")
+        for hook, count in repeated:
+            print(f"      {count:>4} x  {hook}")
+
+    # 3. Print one card's structure so a parser can be written directly.
+    best_shape, best_count = patterns.most_common(1)[0]
+    link = samples[best_shape]
+    card = None
+    for ancestor in _ancestors(link, 6):
+        text = ancestor.text() or ""
+        if PRICE_HINT.search(text) and 25 < len(clean(text)) < 400:
+            card = ancestor
+            break
+
+    if card is None:
+        print("    could not isolate a single card container")
+        return
+
+    print(f"\n    one card ({best_count} like it), container = {_describe(card)}:")
+    for line in _skeleton(card):
+        print(line)
 
 
 def search_url_for(provider, query: str) -> str | None:

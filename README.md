@@ -187,16 +187,24 @@ fix on its own:
 | **Amazon.ae** | works — 6 offers over plain HTTP in ~1s |
 | Noon UAE | connection refused at protocol level (`ERR_HTTP2_PROTOCOL_ERROR`); HTTP/1.1 fallback added, unverified |
 | Sharaf DG | serves a **CAPTCHA** to headless browsers; page loads with zero prices in it |
-| Carrefour UAE | internal search API returns 404 — the version we knew has been retired |
+| Carrefour UAE | search API retired (404), but the **search page returns 200 with prices** — now parsed structurally |
 
-Sharaf DG and Carrefour cannot be fixed with better selectors. A CAPTCHA is a
-deliberate "no", and working around it is out of scope here — the honest fixes
-are an official/affiliate feed, or a commercial scraping proxy via
-`SCRAPER_PROXY`. Until then, turn them off so they stop costing every search
-the full timeout budget:
+Carrefour is recoverable: only its private API died, and the ordinary search
+page still serves products over plain HTTP. That page is built with
+utility-first CSS — `class="relative gap-2xs md:gap-1.5xs pl-md"` describes
+appearance and nothing else — so there is no class worth selecting on and
+`app/structural.py` locates cards by shape instead: a block containing exactly
+one product link, a price and a plausible title. A block holding several
+product links is skipped, because one price shared between them belongs to
+none of them.
+
+Sharaf DG is different. A CAPTCHA is a deliberate "no", and working around it
+is out of scope here — the honest fixes are an official/affiliate feed or a
+commercial scraping proxy via `SCRAPER_PROXY`. Until then, turn it off so it
+stops costing every search the full timeout budget:
 
 ```bash
-DISABLED_STORES=sharaf_dg,carrefour_ae
+DISABLED_STORES=sharaf_dg
 ```
 
 ## When a store breaks
@@ -219,7 +227,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 145 tests
+python -m pytest -q      # 161 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in
@@ -239,6 +247,7 @@ app/
   fx.py          currency conversion, live with static fallback
   pricing.py     landed cost — shipping, duty, VAT
   matching.py    relevance filtering (drops accessories)
+  structural.py  class-free card extraction for utility-CSS storefronts
   scoring.py     ranking and the written rationale
   aggregator.py  concurrent fan-out across stores
   main.py        FastAPI app
