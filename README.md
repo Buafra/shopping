@@ -74,17 +74,38 @@ more than the defaults assume.
 
 ## Running it
 
+### macOS / Linux
+
 ```bash
+git clone https://github.com/Buafra/shopping.git
+cd shopping
 pip install -r requirements.txt
 playwright install chromium      # skip if Chromium is already provisioned
 
-# web UI at http://127.0.0.1:8000
-uvicorn app.main:app --reload
-
-# or from the terminal
+uvicorn app.main:app --reload    # web UI at http://127.0.0.1:8000
 python cli.py "airfryer" --market local
 python cli.py "rtx 4070" --json
 ```
+
+### Windows (PowerShell)
+
+Windows PowerShell 5.1 has no `&&`, so run one command per line. Every command
+must be run from inside the cloned folder — `python cli.py` from `C:\` will
+just report that it cannot find the file.
+
+```powershell
+git clone https://github.com/Buafra/shopping.git
+cd shopping
+python -m pip install -r requirements.txt
+python -m playwright install chromium
+
+python cli.py "sony wh-1000xm5"
+python -m uvicorn app.main:app --reload
+```
+
+The CLI detects a console that cannot render `★ ▶ —`, falls back to ASCII, and
+drops colour codes when output is piped to a file — so a cp1252 console gets
+readable output rather than a `UnicodeEncodeError` halfway through.
 
 ### API
 
@@ -149,7 +170,7 @@ pretending otherwise.**
 ## Tests
 
 ```bash
-python -m pytest -q      # 127 tests
+python -m pytest -q      # 134 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in
