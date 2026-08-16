@@ -86,7 +86,7 @@ def money(value: float | None) -> str:
     return f"{value:,.0f}" if value is not None else G["dash"]
 
 
-def render(response) -> None:
+def render(response, args=None) -> None:
     out(f"\n{BOLD}Results for {G['ldquo']}{response.query}{G['rdquo']}{RESET}  "
           f"{DIM}({response.elapsed_ms / 1000:.1f}s){RESET}\n")
 
@@ -141,7 +141,38 @@ def render(response) -> None:
 
     for note in response.notes:
         out(f"\n{YELLOW}note:{RESET} {note}")
+
+    if getattr(args, "explain", False):
+        render_dropped(response.dropped)
+    elif response.dropped:
+        out(f"\n{DIM}{len(response.dropped)} listing(s) were filtered out. "
+            f"Re-run with --explain to see them and why.{RESET}")
     out("")
+
+
+def render_dropped(dropped) -> None:
+    """Show every filtered listing with the rule that removed it.
+
+    A store reporting "6 offers, 0 matched" is either out of stock or being
+    over-filtered, and the two need opposite fixes. This is how to tell.
+    """
+    if not dropped:
+        out(f"\n{DIM}Nothing was filtered out.{RESET}")
+        return
+
+    out(f"\n{BOLD}Filtered out ({len(dropped)}){RESET}")
+    out(DIM + "-" * 108 + RESET)
+    by_reason: dict[str, list] = {}
+    for item in dropped:
+        by_reason.setdefault(item.reason, []).append(item)
+
+    for reason, items in sorted(by_reason.items(), key=lambda kv: -len(kv[1])):
+        out(f"  {YELLOW}{reason}{RESET} {DIM}({len(items)}){RESET}")
+        for item in items[:6]:
+            out(f"      {DIM}{item.store_label:<16}{money(item.price):>9}{RESET}  "
+                f"{item.title[:66]}")
+        if len(items) > 6:
+            out(f"      {DIM}… and {len(items) - 6} more{RESET}")
 
 
 def _markets(market: str):
@@ -260,7 +291,7 @@ async def recheck(which: str, args) -> int:
         args.market = record_.market
         args.include_used = record_.include_used
         response = await run_search(record_.query, args)
-        render(response)
+        render(response, args)
         render_changes(response, args)
     return 0
 
@@ -272,6 +303,8 @@ async def main() -> int:
     parser.add_argument("--stores", help="comma-separated store keys to limit the search")
     parser.add_argument("--limit", type=int, default=6, help="results per store")
     parser.add_argument("--json", action="store_true", help="emit raw JSON instead of a table")
+    parser.add_argument("--explain", action="store_true",
+                        help="list every filtered-out listing and the rule that removed it")
     parser.add_argument("--include-used", action="store_true",
                         help="include refurbished/renewed/used listings")
     parser.add_argument("--history", action="store_true",
@@ -335,7 +368,7 @@ async def main() -> int:
         if args.json:
             print(json.dumps(response.model_dump(mode="json"), indent=2, ensure_ascii=False))
         else:
-            render(response)
+            render(response, args)
             render_changes(response, args)
         return 0 if response.offers else 1
     finally:

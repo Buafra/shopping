@@ -15,7 +15,7 @@ import time
 
 from . import blocklist, category, fx, matching, pricing, scoring
 from .config import SETTINGS
-from .models import Market, Offer, SearchResponse, StoreStatus
+from .models import DroppedListing, Market, Offer, SearchResponse, StoreStatus
 from .providers import Provider, build_all
 
 log = logging.getLogger(__name__)
@@ -294,6 +294,13 @@ async def search(
         query=query,
         offers=ranked,
         stores=statuses,
+        dropped=[
+            DroppedListing(
+                title=d.title, store_label=d.store_label,
+                price=d.price, reason=d.reason,
+            )
+            for d in result.dropped
+        ],
         recommendation=recommendation,
         fx_rates={k: v for k, v in rates.items() if k in {"USD", "EUR", "GBP", "CNY", "SAR"}},
         fx_source=fx_source,

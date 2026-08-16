@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 import statistics
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .models import Offer
 
@@ -25,6 +25,12 @@ ACCESSORY_TERMS = {
     "mount", "strap", "band", "bag", "replacement", "spare", "repair",
     "sticker", "decal", "wrap", "lens protector", "keyboard cover", "grip",
     "compatible with", "accessory", "accessories",
+    # PC-component add-ons. These sit far below the part's price and would
+    # otherwise anchor the comparison: a AED 25 thermal pad "for RTX 4070" was
+    # kept as a graphics card.
+    "thermal pad", "riser cable", "riser card", "support bracket",
+    "gpu support", "anti-sag", "sag holder", "backplate", "water block",
+    "waterblock", "dust filter", "extension cable", "adapter cable",
 }
 
 # A refurbished unit is not the same purchase as a new one — different
@@ -257,11 +263,62 @@ def looks_like_accessory(query: str, title: str) -> bool:
     return False
 
 
+def rejection_reason(query: str, title: str) -> str | None:
+    """Why this listing is not the product searched for — None if it is.
+
+    "6 offers, 0 matched" is a dead end for whoever has to fix it: a store that
+    genuinely has no stock and a filter that is too strict look identical. This
+    names which rule fired, so the two can be told apart from the output alone.
+    """
+    if not tokenise(query):
+        return "the query has no searchable words"
+    if not tokenise(title):
+        return "no title was parsed from the listing"
+
+    # Checked before the model number, though relevance() rejects on the model
+    # first: a multi-SKU listing usually fails *both* tests, because "RTX 3060
+    # 3070 4070" glues the prefix onto the first number only and so never
+    # contains a bare "rtx4070". "Missing the model" is true but misleading —
+    # the model is right there, in a listing that sells five other cards too.
+    if lists_multiple_products(query, title):
+        return "one listing covering several different products"
+
+    wanted = model_tokens(query)
+    if wanted:
+        missing = wanted - set(tokenise(title))
+        if missing:
+            return f"missing the model number {', '.join(sorted(missing))}"
+    if variant_mismatch(query, title):
+        return "a different variant of that model (Ti/Super/XT/Pro…)"
+    if looks_like_a_system(query, title):
+        return "a complete system or laptop, not the component"
+    if looks_like_accessory(query, title):
+        return "an accessory for the product rather than the product"
+    if looks_used(query, title):
+        return "refurbished or used stock"
+
+    score = relevance(query, title)
+    if score < 0.5:
+        return f"too little overlap with the query (scored {score:.2f})"
+    return None
+
+
+@dataclass
+class Dropped:
+    """One listing that did not make the comparison, and why."""
+
+    title: str
+    store_label: str
+    price: float
+    reason: str
+
+
 @dataclass
 class FilterResult:
     offers: list[Offer]
     dropped_mismatch: int = 0
     dropped_used: int = 0
+    dropped: list[Dropped] = field(default_factory=list)
 
 
 def filter_relevant(
@@ -281,6 +338,7 @@ def filter_relevant(
     if not offers:
         return FilterResult([])
 
+    original = list(offers)
     used_count = 0
     if not include_used:
         fresh = [o for o in offers if not looks_used(query, o.title)]
@@ -301,7 +359,10 @@ def filter_relevant(
         kept = [o for o, score in scored if score >= min_relevance * 0.6]
     if len(kept) < 2:
         kept = [o for o, _ in scored]
-        return FilterResult(kept, len(offers) - len(kept), used_count)
+        return FilterResult(
+            kept, len(offers) - len(kept), used_count,
+            _explain_dropped(original, kept, query),
+        )
 
     prices = [o.landed_aed or o.price_aed or o.price for o in kept]
     median = statistics.median(prices)
@@ -314,4 +375,29 @@ def filter_relevant(
     if len(final) < 2:
         final = kept
 
-    return FilterResult(final, len(offers) - len(final), used_count)
+    return FilterResult(
+        final, len(offers) - len(final), used_count,
+        _explain_dropped(original, final, query),
+    )
+
+
+def _explain_dropped(
+    original: list[Offer], kept: list[Offer], query: str
+) -> list[Dropped]:
+    """Name a reason for every listing that did not survive the filters."""
+    survivors = {id(o) for o in kept}
+    dropped = []
+    for offer in original:
+        if id(offer) in survivors:
+            continue
+        dropped.append(
+            Dropped(
+                title=offer.title,
+                store_label=offer.store_label,
+                price=offer.landed_aed or offer.price_aed or offer.price,
+                # Nothing structural matched, so it lost on price alone.
+                reason=rejection_reason(query, offer.title)
+                or "priced far below the others, so probably a different item",
+            )
+        )
+    return dropped

@@ -219,3 +219,89 @@ def test_the_woocommerce_search_path_is_inside_the_probe_budget():
 def test_the_uae_storefront_is_used_for_microless():
     """www.microless.com is the group site and carries no UAE pricing."""
     assert build("microless").origin == "https://uae.microless.com"
+
+
+# ---- saying why a listing was dropped ------------------------------------
+#
+# A live run had five stores report "N offers, 0 matched". That is a dead end:
+# a store with no stock and a filter that is too strict look identical, and
+# they need opposite fixes.
+
+@pytest.mark.parametrize("title,expected", [
+    ("PNY GeForce RTX 4070 Ti 12GB XLR8", "different variant"),
+    ("ASUS TUF Gaming Laptop RTX 4070", "complete system or laptop"),
+    ("1STPLAYER PC Gaming Pro, Core i5-12400F, RTX 4070", "complete system"),
+    ("GIGABYTE RTX 4060 Ti Windforce", "missing the model number"),
+    # "FE" is itself a variant suffix, so use a plain card here.
+    ("NVIDIA GeForce RTX 4070 Graphics Card (Renewed)", "refurbished"),
+    ("Thermal Pad for RTX 4070 Graphics Card", "accessory"),
+    ("RTX 3060 3070 4060 4070 GPU Cards", "several different products"),
+])
+def test_every_rejection_names_its_rule(title, expected):
+    from app.matching import rejection_reason
+
+    reason = rejection_reason("rtx 4070", title)
+    assert reason and expected in reason, f"got {reason!r}"
+
+
+def test_a_genuine_match_has_no_rejection_reason():
+    from app.matching import rejection_reason
+
+    assert rejection_reason(
+        "rtx 4070", "Gigabyte GeForce RTX 4070 Gaming OC 12G Graphics Card"
+    ) is None
+
+
+def test_dropped_listings_are_reported_with_their_reasons():
+    from app.matching import filter_relevant
+    from app.models import Market, Offer
+
+    def offer(title, price):
+        return Offer(
+            store="gcc_gamers", store_label="GCC Gamers", market=Market.LOCAL,
+            country="AE", title=title, url=f"https://x.ae/{abs(hash(title))}",
+            price=price, currency="AED", price_aed=price, landed_aed=price,
+        )
+
+    result = filter_relevant([
+        offer("Gigabyte GeForce RTX 4070 Gaming OC 12G", 2150),
+        offer("MSI GeForce RTX 4070 VENTUS 2X 12G", 2100),
+        offer("PNY GeForce RTX 4070 Ti 12GB", 3000),
+        offer("ASUS TUF Gaming Laptop With RTX 4070", 6600),
+    ], "rtx 4070")
+
+    assert len(result.offers) == 2
+    reasons = {d.title: d.reason for d in result.dropped}
+    assert len(reasons) == 2
+    assert "variant" in reasons["PNY GeForce RTX 4070 Ti 12GB"]
+    assert "laptop" in reasons["ASUS TUF Gaming Laptop With RTX 4070"]
+    assert all(d.store_label == "GCC Gamers" for d in result.dropped)
+
+
+# ---- telling a wrong URL apart from changed markup -----------------------
+
+def test_a_page_with_no_prices_blames_the_url_not_the_markup():
+    """Seven stores reported "the markup has changed" when the likeliest cause
+    was a search URL that does not exist. Nothing had changed, and there are no
+    selectors to check — a config-driven store has no selectors."""
+    p = provider()
+    p.last_html = "<html><body><h1>Page not found</h1></body></html>"
+
+    message, kind = p.describe_empty_result()
+    assert "search URL is probably wrong" in message
+    assert "diagnose.py microless" in message
+    assert kind == "parse"
+
+
+def test_a_page_with_prices_points_at_the_card_layout():
+    p = provider()
+    p.last_html = "<html><body><div>AED 2,150.00</div><div>AED 1,999.00</div></body></html>"
+
+    message, _ = p.describe_empty_result()
+    assert "product_path" in message
+
+
+def test_bespoke_providers_keep_the_selector_message():
+    """Their URL is known-good, so their selectors really are the suspect."""
+    message, kind = build("amazon_ae").describe_empty_result()
+    assert "selectors" in message and kind == "parse"

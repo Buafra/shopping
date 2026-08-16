@@ -155,11 +155,7 @@ class Provider(abc.ABC):
                     "blocked",
                 )
             elif fetch_succeeded:
-                error, error_kind = (
-                    "page fetched but no listings parsed — this store's markup "
-                    "has probably changed, check its provider selectors",
-                    "parse",
-                )
+                error, error_kind = self.describe_empty_result()
             else:
                 error, error_kind = ("no matching results found", "no_results")
 
@@ -175,6 +171,19 @@ class Provider(abc.ABC):
             method=method,
         )
         return offers, status
+
+    def describe_empty_result(self) -> tuple[str, str]:
+        """Why a page that loaded fine produced no listings.
+
+        For a hand-written provider the answer is nearly always its selectors,
+        since the URL is known-good. Providers that discover their own search
+        page can be in a different situation entirely and override this.
+        """
+        return (
+            "page fetched but no listings parsed — this store's markup "
+            "has probably changed, check its provider selectors",
+            "parse",
+        )
 
     def _postprocess(
         self, offers: list[Offer], limit: int, query: str = ""

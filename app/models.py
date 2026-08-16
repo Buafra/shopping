@@ -82,6 +82,19 @@ class Recommendation(BaseModel):
     confidence: str  # "high" | "medium" | "low"
 
 
+class DroppedListing(BaseModel):
+    """A listing that was fetched but kept out of the comparison.
+
+    Without this, "6 offers, 0 matched" gives no way to tell a store with no
+    stock from a filter that is too strict — and those need opposite fixes.
+    """
+
+    title: str
+    store_label: str
+    price: float
+    reason: str
+
+
 class SearchResponse(BaseModel):
     query: str
     currency: str = "AED"
@@ -92,6 +105,7 @@ class SearchResponse(BaseModel):
     fx_source: str = "fallback"
     elapsed_ms: int = 0
     notes: list[str] = Field(default_factory=list)
+    dropped: list[DroppedListing] = Field(default_factory=list)
 
     def model_dump_api(self) -> dict[str, Any]:
         return self.model_dump(mode="json")

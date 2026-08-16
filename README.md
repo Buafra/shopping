@@ -356,6 +356,17 @@ To search them without the category check, name them:
 python cli.py "thermal paste" --stores microless,scan_uk
 ```
 
+When a store reports "N offers, 0 matched", ask it why:
+
+```bash
+python cli.py "rtx 4070" --explain
+```
+
+Every filtered listing is printed under the rule that removed it — a wrong
+variant, a prebuilt system, an accessory, refurbished stock. A store with no
+stock and a filter that is too strict look identical without this, and they
+need opposite fixes.
+
 These twelve are config-only entries and unverified from a UAE connection — the
 same blocking that affects eBay and AliExpress may apply. `python diagnose.py
 microless` reports what any one of them actually returns, and the fix for a
@@ -513,7 +524,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 363 tests
+python -m pytest -q      # 375 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in

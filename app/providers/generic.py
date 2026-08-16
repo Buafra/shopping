@@ -23,7 +23,7 @@ from ..browser import render
 from ..config import DEFAULT_SEARCH_PATTERNS, STORES, StoreSpec
 from ..models import Offer
 from ..net import FetchError, base_headers, fetch
-from ..structural import Card, guess_product_path, parse_cards
+from ..structural import PRICE_TEXT, Card, guess_product_path, parse_cards
 from .base import Provider
 
 log = logging.getLogger(__name__)
@@ -108,6 +108,33 @@ class GenericProvider(Provider):
             html, origin=self.origin, link_match=link_match, max_cards=limit * 4
         )
         return [self._offer(card) for card in cards]
+
+    def describe_empty_result(self) -> tuple[str, str]:
+        """A config-driven store has one failure mode a coded one does not.
+
+        Its search URL is a guess. A wrong guess returns a perfectly healthy
+        404 or home page, which "the markup changed" describes exactly wrongly
+        — nothing changed and there are no selectors to check. The tell is
+        whether the page has any prices on it at all.
+        """
+        html = self.last_html or ""
+        if not html:
+            return ("no page was returned by any candidate search URL", "parse")
+
+        if not PRICE_TEXT.search(html):
+            return (
+                "the page loaded but contains no prices at all — the search "
+                "URL is probably wrong for this store, or its results are "
+                "rendered by JavaScript. Run: python diagnose.py "
+                f"{self.spec.key}",
+                "parse",
+            )
+        return (
+            "prices are on the page but no product cards could be read from "
+            "them — set `product_path` for this store in app/config.py, or run "
+            f"python diagnose.py {self.spec.key} to see the card layout",
+            "parse",
+        )
 
     def _offer(self, card: Card) -> Offer:
         return self.make_offer(
