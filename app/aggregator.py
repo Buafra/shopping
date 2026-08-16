@@ -13,7 +13,7 @@ import logging
 import os
 import time
 
-from . import blocklist, fx, matching, pricing, scoring
+from . import blocklist, category, fx, matching, pricing, scoring
 from .config import SETTINGS
 from .models import Market, Offer, SearchResponse, StoreStatus
 from .providers import Provider, build_all
@@ -159,6 +159,20 @@ async def search(
     if not providers:
         raise ValueError(_explain_no_stores(stores, markets))
 
+    # Specialist stores join a search they can answer and sit out one they
+    # cannot. Naming stores explicitly overrides this — an explicit request is
+    # a decision, not a suggestion.
+    specialists: list[str] = []
+    if not stores:
+        general = [
+            p for p in providers
+            if category.store_matches_query(p.spec.tags, query)
+        ]
+        specialists = [
+            p.spec.label for p in general if p.spec.tags
+        ]
+        providers = general or providers
+
     # Skip stores that refused us recently. Explicitly naming stores overrides
     # this — asking for a store by name is a request to try it regardless.
     skipped: dict[str, str] = {}
@@ -199,6 +213,14 @@ async def search(
                 blocklist.remember(status.store, status.error or "blocked")
             except Exception:
                 log.warning("could not record block for %s", status.store, exc_info=True)
+
+    if specialists:
+        notes.append(
+            f"Added {len(specialists)} component specialist(s) for this search: "
+            + ", ".join(sorted(specialists))
+            + ". They stock parts that general retailers do not, and sit out "
+            "searches outside that category."
+        )
 
     if skipped:
         notes.append(

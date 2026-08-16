@@ -46,8 +46,39 @@ number** — never on the sticker price.
 **UAE (local):** Amazon.ae · Noon UAE · Sharaf DG · Carrefour UAE
 **Global:** Amazon.com · eBay · AliExpress · Newegg
 
-Adding another store is one module in `app/providers/` plus one line each in
-`app/config.py` and `app/providers/__init__.py`. Nothing else changes.
+**PC-component specialists**, added automatically when the search is for a part
+(see [PC parts](#pc-parts)):
+Microless · Emax · Jumbo *(UAE)* · B&H Photo *(US)* · Overclockers UK ·
+Scan UK · Alternate *(DE)*
+
+### Adding a store
+
+Most shops need **no code at all** — an entry in `STORES` is the whole change:
+
+```python
+"my_shop": StoreSpec(
+    key="my_shop", label="My Shop", market=Market.LOCAL, country="AE",
+    currency="AED", trust=0.8, default_delivery_days=3,
+    origin="https://www.myshop.ae",     # the only required field
+),
+```
+
+`app/providers/generic.py` then finds the search page (trying the Shopify,
+Magento, WooCommerce and plain `?q=` conventions in turn) and reads product
+cards by shape. Product URLs are detected from the page itself, so you do not
+need to know the store's markup — `structural.guess_product_path` looks at
+which link pattern repeats next to a price.
+
+Override any of that when the defaults miss:
+
+| Field | Use when |
+|---|---|
+| `search_urls=("https://…/search?query={q}",)` | the search page is somewhere unusual |
+| `product_path="/c/product/"` | detection picks the wrong link pattern |
+| `tags=("pc_parts",)` | the shop only stocks one category |
+
+A store that ships a JSON API worth reading still earns a module in
+`app/providers/` — that is why Carrefour, Noon and Amazon have one.
 
 ## How the recommendation is decided
 
@@ -295,13 +326,38 @@ DISABLED_STORES=sharaf_dg
 
 ### PC parts
 
-There is nothing special to enable — it is the same search. Newegg and
-Amazon.com cover global PC hardware, Amazon.ae and Carrefour cover local:
+Same search, wider net. General retailers carry a thin and expensive slice of
+this category, so a query recognised as a component pulls in seven specialist
+shops on top of the usual eight stores:
 
 ```bash
 python cli.py "rtx 4070"
 python cli.py "ryzen 7 7800x3d" --market global
+python cli.py "samsung 990 pro 2tb nvme"
 ```
+
+Recognition (`app/category.py`) keys off product families rather than a fixed
+list — `rtx 4070`, `7800x3d`, `b650 motherboard`, `ddr5`, `850w power supply`
+and `nvme` all qualify; `air fryer` and `iphone 15 pro` do not, and those
+searches run against exactly the same eight stores as before. Detection is
+deliberately generous: a false positive costs a few seconds against shops that
+return nothing, while a false negative costs you the cheapest listing.
+
+The specialists span three currencies (AED, GBP, EUR), which matters more than
+it sounds — a £549 card from the UK and a €599 card from Germany are ranked on
+**landed** cost in AED, including shipping, 5% customs and 5% VAT, so the
+sticker price never decides the winner on its own.
+
+To search them without the category check, name them:
+
+```bash
+python cli.py "thermal paste" --stores microless,scan_uk
+```
+
+These seven are config-only entries and unverified from a UAE connection — the
+same blocking that affects eBay and AliExpress may apply. `python diagnose.py
+microless` reports what any one of them actually returns, and the fix for a
+store that has moved its search page is a URL in `app/config.py`, not code.
 
 Landed cost matters more here than anywhere: a GPU that looks cheap on a US
 site attracts 5% duty and 5% VAT on a high-value item, which routinely erases
@@ -444,7 +500,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 322 tests
+python -m pytest -q      # 361 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in

@@ -35,6 +35,28 @@ FACTORIES: dict[str, Callable[[], Provider]] = {
 }
 
 
+def _config_driven(store_key: str) -> Callable[[], Provider]:
+    """Factory for a store that has configuration but no module of its own.
+
+    The spec is looked up when the provider is built, not now, so a store
+    switched off or altered after import is still seen correctly.
+    """
+
+    def make() -> Provider:
+        from .generic import GenericProvider
+
+        return GenericProvider(STORES[store_key])
+
+    return make
+
+
+# Any configured store without a bespoke module gets the structural scraper.
+# This is what makes adding a shop a config change rather than a code change.
+for _key, _spec in STORES.items():
+    if _key not in FACTORIES and (_spec.origin or _spec.search_urls):
+        FACTORIES[_key] = _config_driven(_key)
+
+
 def build(store_key: str) -> Provider:
     try:
         return FACTORIES[store_key]()

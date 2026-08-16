@@ -16,16 +16,24 @@ mis-parsed rows is worse than one that honestly reports nothing.
 
 from __future__ import annotations
 
+import collections
 import re
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from selectolax.parser import HTMLParser
 
 from .net import absolutise, clean_text, parse_int, parse_price, parse_rating
 
-# "AED 1,279.00", "1,279.00 AED", "Dhs. 349", "$45.99"
+# "AED 1,279.00", "1,279.00 AED", "Dhs. 349", "$45.99", "£549.99", "2.199,00 €"
+#
+# The symbol list must stay in step with CURRENCY_MARKERS below. It did not:
+# £ and € were missing, so a UK or German storefront had no prices as far as
+# this module was concerned, every card was discarded for want of one, and the
+# store reported "markup changed" — for markup it had never been able to read.
 PRICE_TEXT = re.compile(
-    r"(?:AED|USD|SAR|Dhs\.?|د\.إ|\$)\s?\d[\d,.\s]*|\d[\d,.\s]*\s?(?:AED|SAR|د\.إ)",
+    r"(?:AED|USD|SAR|GBP|EUR|Dhs\.?|د\.إ|\$|£|€)\s?\d[\d,.\s]*"
+    r"|\d[\d,.\s]*\s?(?:AED|SAR|GBP|EUR|د\.إ|£|€)",
     re.I,
 )
 # A store that localises by IP quotes local currency on the same markup. The
@@ -217,6 +225,67 @@ def _rating_from(container) -> tuple[float | None, int | None]:
             if rating is not None:
                 return rating, count
     return None, None
+
+
+# Path fragments that mark a product page across most storefront platforms.
+# Ordered loosely by specificity; ties are broken towards the longer match.
+PRODUCT_PATH_HINTS = (
+    "/dp/", "/itm/", "/products/", "/product/", "/item/", "/prd/",
+    "/pd/", "/ip/", "/p/", "/buy/", "/shop/",
+)
+
+
+def guess_product_path(html: str, *, min_links: int = 2) -> str | None:
+    """Work out what this store's product URLs look like, from the page itself.
+
+    Adding a store should not require reading its HTML first. Product links are
+    the one thing every storefront has in common, and the ones that matter sit
+    next to a price — navigation and footer links do not. So: collect the
+    links that sit near a price, and report the path fragment they share.
+
+    Returns None when the page has no price-adjacent links at all, which is
+    what a bot wall or a JS-only shell looks like.
+    """
+    if not html:
+        return None
+
+    tree = HTMLParser(html)
+    hrefs: list[str] = []
+    for link in tree.css("a[href]"):
+        href = link.attributes.get("href") or ""
+        if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
+            continue
+        for ancestor in _ancestors(link, 4):
+            text = node_text(ancestor)
+            if len(text) < 900 and PRICE_TEXT.search(text):
+                hrefs.append(href)
+                break
+
+    if not hrefs:
+        return None
+
+    hinted = {
+        hint: sum(1 for href in hrefs if hint in href)
+        for hint in PRODUCT_PATH_HINTS
+    }
+    usable = {hint: n for hint, n in hinted.items() if n >= min_links}
+    if usable:
+        # Prefer the more specific fragment when several match: "/products/"
+        # contains "/product/" only by accident of spelling, and picking the
+        # longer one keeps the match tighter.
+        return max(usable.items(), key=lambda kv: (kv[1], len(kv[0])))[0]
+
+    # No recognised platform. Fall back to whatever path segment these links
+    # actually share — plenty of stores use /gp/, /catalog/ or a locale prefix.
+    segments: collections.Counter = collections.Counter()
+    for href in hrefs:
+        for segment in urlsplit(href).path.split("/"):
+            if segment and not segment.isdigit() and len(segment) <= 14:
+                segments[f"/{segment}/"] += 1
+    for segment, count in segments.most_common():
+        if count >= min_links:
+            return segment
+    return None
 
 
 def parse_cards(

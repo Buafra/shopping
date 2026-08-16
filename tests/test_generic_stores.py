@@ -1,0 +1,206 @@
+"""Config-driven stores.
+
+The point of these is that adding a shop costs an entry in `config.STORES` and
+no code at all — so the machinery that makes that true is what gets tested:
+finding the search page, recognising product links, and reading cards by shape.
+"""
+
+import pytest
+
+from app.category import looks_like_pc_part, store_matches_query
+from app.config import STORES
+from app.providers import FACTORIES, build
+from app.providers.generic import GenericProvider
+from app.structural import guess_product_path
+
+# A storefront in the style most shops actually use: utility CSS, no semantic
+# class names, product links repeating under a price.
+SHOP_PAGE = """
+<html><head><title>Search: rtx 4070</title></head><body>
+  <div class="grid">
+    <div class="rounded p-2">
+      <a href="/products/gigabyte-rtx-4070-gaming-oc">
+        <img src="/img/1.jpg" alt="Gigabyte RTX 4070 Gaming OC 12G">
+      </a>
+      <h3>Gigabyte GeForce RTX 4070 Gaming OC 12G</h3>
+      <span class="text-lg">AED 2,099.00</span>
+    </div>
+    <div class="rounded p-2">
+      <a href="/products/msi-rtx-4070-ventus-2x">
+        <img src="/img/2.jpg" alt="MSI RTX 4070 VENTUS 2X">
+      </a>
+      <h3>MSI GeForce RTX 4070 VENTUS 2X E 12G OC</h3>
+      <span class="text-lg">AED 1,949.00</span>
+    </div>
+    <div class="rounded p-2">
+      <a href="/products/asus-dual-rtx-4070-evo">
+        <img src="/img/3.jpg" alt="ASUS Dual RTX 4070 EVO">
+      </a>
+      <h3>ASUS Dual GeForce RTX 4070 EVO OC 12GB</h3>
+      <span class="text-lg">AED 2,249.00</span>
+    </div>
+  </div>
+</body></html>
+"""
+
+
+def provider(key="microless"):
+    return build(key)
+
+
+# ---- finding the product links -------------------------------------------
+
+def test_product_links_are_discovered_without_being_configured():
+    """A new store should not require reading its HTML first."""
+    assert guess_product_path(SHOP_PAGE) == "/products/"
+
+
+def test_navigation_links_do_not_look_like_products():
+    """Only links sitting next to a price count, so menus and footers are out."""
+    page = """
+    <html><body>
+      <nav><a href="/about/us">About</a><a href="/help/faq">Help</a></nav>
+      <div><a href="/p/thing-one">Thing One Widget</a><span>AED 99.00</span></div>
+      <div><a href="/p/thing-two">Thing Two Widget</a><span>AED 89.00</span></div>
+    </body></html>
+    """
+    assert guess_product_path(page) == "/p/"
+
+
+def test_a_page_with_no_prices_yields_no_pattern():
+    """A bot wall or a JS shell has links but no prices — say so, rather than
+    inventing a pattern and reporting zero products as a parser fault."""
+    assert guess_product_path("<html><body><a href='/x/y'>Hi</a></body></html>") is None
+    assert guess_product_path("") is None
+
+
+# ---- parsing --------------------------------------------------------------
+
+def test_a_configured_store_parses_a_generic_shop_page():
+    offers = provider()._parse(SHOP_PAGE, limit=10)
+
+    assert len(offers) == 3
+    cheapest = min(offers, key=lambda o: o.price)
+    assert cheapest.price == 1949.00
+    assert "VENTUS" in cheapest.title
+    assert cheapest.url.startswith("https://www.microless.com/products/")
+    assert cheapest.store == "microless"
+    assert cheapest.currency == "AED"
+
+
+def test_the_page_currency_wins_over_the_configured_default():
+    """A UK store quoting GBP must not be read as its configured currency by
+    accident — and a store that localises by IP quotes whatever it likes."""
+    page = SHOP_PAGE.replace("AED", "£").replace("£ ", "£")
+    offers = provider("scan_uk")._parse(page, limit=10)
+
+    assert offers, "structural parse found nothing"
+    assert {o.currency for o in offers} == {"GBP"}
+
+
+def test_an_empty_page_parses_to_nothing_rather_than_raising():
+    assert provider()._parse("<html><body></body></html>", limit=10) == []
+
+
+# ---- search URLs ----------------------------------------------------------
+
+def test_a_store_without_its_own_search_url_tries_the_common_ones():
+    """Most shops run Shopify, Magento or WooCommerce; between them the
+    conventional search paths cover the long tail without configuration."""
+    urls = provider("emax").search_urls("rtx 4070")
+
+    assert urls, "no candidate search URLs generated"
+    assert all("rtx+4070" in u for u in urls)
+    assert len({u.split("?")[0] for u in urls}) > 1, "candidates must differ"
+
+
+def test_a_configured_search_url_is_used_verbatim():
+    urls = provider("overclockers_uk").search_urls("rtx 4070")
+    assert urls[0] == "https://www.overclockers.co.uk/search?sSearch=rtx+4070"
+
+
+def test_candidate_urls_are_capped():
+    """Probing is not free: each miss costs a round trip out of the store's
+    budget, and a store that answers nothing must not consume the whole run."""
+    from app.providers.generic import MAX_CANDIDATE_URLS
+
+    assert len(provider("emax").search_urls("x")) <= MAX_CANDIDATE_URLS
+
+
+def test_a_store_with_no_origin_is_rejected_at_construction():
+    from dataclasses import replace
+
+    with pytest.raises(ValueError, match="origin or a search URL"):
+        GenericProvider(replace(STORES["microless"], origin=None, search_urls=()))
+
+
+# ---- the registry ---------------------------------------------------------
+
+def test_every_configured_store_can_be_built():
+    for key in STORES:
+        assert key in FACTORIES, f"{key} has no provider"
+        assert build(key).spec.key == key
+
+
+def test_config_driven_stores_need_no_module():
+    """The whole point: these have configuration and nothing else."""
+    for key in ("microless", "emax", "jumbo_ae", "bhphoto",
+                "overclockers_uk", "scan_uk", "alternate_de"):
+        assert isinstance(build(key), GenericProvider)
+
+
+# ---- when specialists join a search ---------------------------------------
+
+@pytest.mark.parametrize("query", [
+    "rtx 4070", "RTX4070", "ryzen 7 7800x3d", "core i5-12400f",
+    "b650 motherboard am5", "samsung 990 pro 2tb nvme", "graphics card",
+    "corsair ddr5 32gb", "850w power supply", "noctua cpu cooler",
+    "radeon rx 7900 xtx", "intel arc a770",
+])
+def test_component_searches_are_recognised(query):
+    assert looks_like_pc_part(query)
+
+
+@pytest.mark.parametrize("query", [
+    "sony wh-1000xm5", "air fryer", "iphone 15 pro", "nike running shoes",
+    "kettle", "ramen noodles", "phone case", "",
+])
+def test_ordinary_shopping_is_not_mistaken_for_a_component(query):
+    assert not looks_like_pc_part(query)
+
+
+def test_untagged_stores_take_part_in_every_search():
+    """Existing stores must behave exactly as they did before tagging existed."""
+    for key in ("amazon_ae", "noon", "newegg", "carrefour_ae"):
+        assert STORES[key].tags == ()
+        assert store_matches_query(STORES[key].tags, "air fryer")
+        assert store_matches_query(STORES[key].tags, "rtx 4070")
+
+
+def test_specialists_sit_out_searches_they_cannot_answer():
+    assert store_matches_query(("pc_parts",), "rtx 4070")
+    assert not store_matches_query(("pc_parts",), "air fryer")
+
+
+# ---- currencies the UK and EU stores actually quote in --------------------
+
+@pytest.mark.parametrize("price_text,expected_value,expected_currency", [
+    ("£549.99", 549.99, "GBP"),
+    ("GBP 549.99", 549.99, "GBP"),
+    ("€1,299.00", 1299.00, "EUR"),
+    # Germany writes the separators the other way round. Reading this as
+    # 2.199 would price a graphics card at under three euros.
+    ("2.199,00 €", 2199.00, "EUR"),
+    ("AED 2,099.00", 2099.00, "AED"),
+])
+def test_european_prices_are_read_correctly(price_text, expected_value, expected_currency):
+    """£ and € were missing from the price pattern, so a UK or German shop had
+    no prices at all as far as the parser was concerned — every card discarded
+    for want of one, and the store blamed for markup it never managed to read."""
+    from app.net import parse_price
+    from app.structural import PRICE_TEXT, detect_currency
+
+    match = PRICE_TEXT.search(price_text)
+    assert match, f"{price_text!r} was not recognised as a price"
+    assert parse_price(match.group(0)) == pytest.approx(expected_value)
+    assert detect_currency(price_text) == expected_currency

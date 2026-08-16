@@ -190,8 +190,12 @@ def test_api_rejects_bad_market(client):
 
 
 def test_api_stores_lists_registry(client):
+    from app.config import STORES
+
     body = client.get("/api/stores").json()
-    assert len(body["stores"]) == 8
+    # Against the registry, not a hard-coded count: adding a store is meant to
+    # be a config change, and a test that has to be edited too is a tax on it.
+    assert {s["key"] for s in body["stores"]} == set(STORES)
     assert {s["market"] for s in body["stores"]} == {"local", "global"}
     assert sum(body["weights"].values()) == pytest.approx(1.0)
 

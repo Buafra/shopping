@@ -45,7 +45,10 @@ class Settings:
     # fallback (often the only path that works for JS-heavy sites) ever runs.
     http_phase_timeout: float = _env_float("HTTP_PHASE_TIMEOUT", 20.0)
     browser_phase_timeout: float = _env_float("BROWSER_PHASE_TIMEOUT", 35.0)
-    max_concurrent_stores: int = _env_int("MAX_CONCURRENT_STORES", 8)
+    # Enough for every store to run in one wave. A cap below the store count
+    # costs a second round of the slowest store for no saving — these are
+    # network waits, not CPU work.
+    max_concurrent_stores: int = _env_int("MAX_CONCURRENT_STORES", 16)
     per_store_results: int = _env_int("PER_STORE_RESULTS", 6)
 
     # Behaviour
@@ -92,6 +95,23 @@ class StoreSpec:
     # stores that answer promptly or fail fast.
     http_timeout: float | None = None
 
+    # ---- config-driven stores --------------------------------------------
+    #
+    # A store with `origin` set needs no Python at all: the structural parser
+    # finds product cards by shape, so adding a shop is an entry in this dict
+    # rather than a new module. Bespoke providers still win where a store
+    # ships a JSON API worth using.
+    origin: str | None = None
+    # Search-page templates, tried in order until one yields listings. `{q}`
+    # is the URL-encoded query. Empty means "try the common platform paths".
+    search_urls: tuple[str, ...] = ()
+    # The path fragment product URLs contain ("/p/", "/products/"). Left None,
+    # it is detected from the page — see structural.guess_product_path.
+    product_path: str | None = None
+    # Stores that only make sense for some searches. An untagged store is
+    # always used; a tagged one joins in when the query matches its tag.
+    tags: tuple[str, ...] = ()
+
 
 STORES: dict[str, StoreSpec] = {
     # ---- UAE local market -------------------------------------------------
@@ -135,7 +155,79 @@ STORES: dict[str, StoreSpec] = {
         currency="USD", trust=0.82, default_delivery_days=12, default_shipping=20.0,
         incurs_import_fees=True,
     ),
+
+    # ---- PC-component specialists ----------------------------------------
+    #
+    # Tagged `pc_parts`, so they join a search for a graphics card or a CPU and
+    # sit out a search for a kettle. General-goods stores carry a thin, dear
+    # slice of this category; these are where the cheap stock actually is.
+    #
+    # All of them are config-driven: no parser module, no selectors. If one
+    # stops working the fix is a URL in this dict, and `python diagnose.py
+    # <key>` says which URL to use.
+    "microless": StoreSpec(
+        key="microless", label="Microless (UAE)", market=Market.LOCAL, country="AE",
+        currency="AED", trust=0.80, default_delivery_days=3, default_shipping=0.0,
+        origin="https://www.microless.com",
+        search_urls=("https://www.microless.com/search/?q={q}",),
+        tags=("pc_parts",),
+    ),
+    "emax": StoreSpec(
+        key="emax", label="Emax (UAE)", market=Market.LOCAL, country="AE",
+        currency="AED", trust=0.82, default_delivery_days=3, default_shipping=0.0,
+        origin="https://www.emaxme.com",
+        tags=("pc_parts",),
+    ),
+    "jumbo_ae": StoreSpec(
+        key="jumbo_ae", label="Jumbo (UAE)", market=Market.LOCAL, country="AE",
+        currency="AED", trust=0.85, default_delivery_days=3, default_shipping=0.0,
+        origin="https://www.jumbo.ae",
+        tags=("pc_parts",),
+    ),
+    "bhphoto": StoreSpec(
+        key="bhphoto", label="B&H Photo (US)", market=Market.GLOBAL, country="US",
+        currency="USD", trust=0.90, default_delivery_days=12, default_shipping=25.0,
+        incurs_import_fees=True,
+        origin="https://www.bhphotovideo.com",
+        search_urls=("https://www.bhphotovideo.com/c/search?q={q}",),
+        product_path="/c/product/",
+        tags=("pc_parts",),
+    ),
+    "overclockers_uk": StoreSpec(
+        key="overclockers_uk", label="Overclockers UK", market=Market.GLOBAL,
+        country="GB", currency="GBP", trust=0.84,
+        default_delivery_days=12, default_shipping=25.0, incurs_import_fees=True,
+        origin="https://www.overclockers.co.uk",
+        search_urls=("https://www.overclockers.co.uk/search?sSearch={q}",),
+        tags=("pc_parts",),
+    ),
+    "scan_uk": StoreSpec(
+        key="scan_uk", label="Scan UK", market=Market.GLOBAL, country="GB",
+        currency="GBP", trust=0.84, default_delivery_days=12, default_shipping=25.0,
+        incurs_import_fees=True,
+        origin="https://www.scan.co.uk",
+        search_urls=("https://www.scan.co.uk/search?q={q}",),
+        tags=("pc_parts",),
+    ),
+    "alternate_de": StoreSpec(
+        key="alternate_de", label="Alternate (DE)", market=Market.GLOBAL, country="DE",
+        currency="EUR", trust=0.83, default_delivery_days=14, default_shipping=30.0,
+        incurs_import_fees=True,
+        origin="https://www.alternate.de",
+        search_urls=("https://www.alternate.de/listing.xhtml?q={q}",),
+        tags=("pc_parts",),
+    ),
 }
+
+# Tried in order for a store that names no search URL of its own. These cover
+# Shopify, Magento, WooCommerce and the plain `?q=` convention between them,
+# which is most of the storefronts in existence.
+DEFAULT_SEARCH_PATTERNS: tuple[str, ...] = (
+    "{origin}/search?q={q}",
+    "{origin}/catalogsearch/result/?q={q}",
+    "{origin}/search?type=product&q={q}",
+    "{origin}/?s={q}&post_type=product",
+)
 
 
 def apply_disabled_stores(registry: dict[str, StoreSpec], raw: str) -> set[str]:
