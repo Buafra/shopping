@@ -145,11 +145,45 @@ The CLI detects a console that cannot render `★ ▶ —`, falls back to ASCII,
 drops colour codes when output is piped to a file — so a cp1252 console gets
 readable output rather than a `UnicodeEncodeError` halfway through.
 
+## Tracking prices over time
+
+Every search is recorded, so re-running it later answers the question that
+actually matters — *has it moved?*
+
+```bash
+python cli.py "rtx 4070"          # searched, and now tracked
+python cli.py --history           # what you are watching, and how it has moved
+python cli.py --recheck 1         # re-run search 1 and show the difference
+python cli.py --recheck all       # re-check everything
+python cli.py --forget 1          # stop tracking
+python cli.py "rtx 4070" --no-save   # search without recording
+```
+
+```
+Since last check  (search #1)
+  1 cheaper, 1 dearer, 2 gone
+    -98 (-12.0%)  819 → 721  Amazon.ae  Sony WH-1000XM5 Wireless Industry…
+    +78 (+6.0%)  1,299 → 1,377  Amazon.ae  Sony WH-1000XM5 Noise Cancelling…
+    gone                 1,199  Noon UAE  Sony WH-1000XM5 Out Of Stock Variant
+```
+
+Listings are matched between runs by **URL path**, ignoring query strings —
+stores append campaign parameters that change on every fetch, and matching on
+the raw URL would report every listing as vanished and replaced. Searches
+limited to specific stores are not tracked, since those are diagnostics.
+
+History lives in `history.db` (SQLite, no extra dependency); set `HISTORY_DB`
+to move it. The web UI shows the same list with *Check now* and *Forget*.
+
 ### API
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/search?q=…` | full comparison; `market=all\|local\|global`, `stores=ebay,noon` |
+| `GET /api/search?q=…` | full comparison; `market=all\|local\|global`, `stores=ebay,noon`, `include_used`, `save_history` |
+| `GET /api/history` | tracked searches and how their best price has moved |
+| `GET /api/history/{id}` | what changed at the last check |
+| `POST /api/history/{id}/recheck` | re-run a tracked search and diff it |
+| `DELETE /api/history/{id}` | stop tracking |
 | `GET /api/stores` | store registry and current scoring weights |
 | `GET /api/health` | FX source and whether the browser fallback is working |
 
@@ -163,6 +197,7 @@ All optional, all environment variables:
 | `HTTP_PHASE_TIMEOUT` | `20` | cap on the whole HTTP phase, retries included |
 | `BROWSER_PHASE_TIMEOUT` | `35` | cap on the browser fallback |
 | `DISABLED_STORES` | – | comma-separated keys to skip, e.g. `sharaf_dg,carrefour_ae` |
+| `HISTORY_DB` | `history.db` | where tracked searches are stored |
 | `MAX_RETRIES` | `2` | retries on timeout/5xx/429 |
 | `PER_STORE_RESULTS` | `6` | listings kept per store |
 | `USE_BROWSER_FALLBACK` | `true` | allow Playwright when plain HTTP is blocked |
@@ -284,7 +319,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 227 tests
+python -m pytest -q      # 248 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in
@@ -305,6 +340,7 @@ app/
   pricing.py     landed cost — shipping, duty, VAT
   matching.py    relevance filtering (drops accessories)
   structural.py  class-free card extraction for utility-CSS storefronts
+  history.py     search history and price-change tracking (SQLite)
   scoring.py     ranking and the written rationale
   aggregator.py  concurrent fan-out across stores
   main.py        FastAPI app

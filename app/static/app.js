@@ -160,6 +160,101 @@ function sortOffers(mode) {
   renderOffers(sorted);
 }
 
+// ---------- tracked searches ----------
+
+const historyBody = $('history-body');
+
+const signed = (value) => (value > 0 ? '+' : '') + aed(value);
+
+function deltaCell(delta) {
+  if (delta === null || delta === undefined) return '<span class="delta flat">—</span>';
+  if (delta < 0) return `<span class="delta down">${signed(delta)} AED</span>`;
+  if (delta > 0) return `<span class="delta up">${signed(delta)} AED</span>`;
+  return '<span class="delta flat">no change</span>';
+}
+
+async function loadHistory() {
+  try {
+    const response = await fetch('/api/history');
+    const data = await response.json();
+    const searches = data.searches || [];
+
+    if (!searches.length) {
+      historyBody.innerHTML =
+        '<p class="muted">Searches you run are tracked here, so you can re-check '
+        + 'them later and see what moved.</p>';
+      return;
+    }
+
+    historyBody.innerHTML = searches.map((s) => `
+      <div class="history-row" data-id="${s.id}">
+        <span class="history-q">${escapeHtml(s.query)}</span>
+        <span class="history-meta">${s.market} · ${s.checks} check${s.checks === 1 ? '' : 's'}
+          · ${escapeHtml((s.last_checked_at || '').slice(0, 16).replace('T', ' '))}</span>
+        <span class="history-price">${s.best_landed_aed === null ? '—'
+          : 'AED ' + aed(s.best_landed_aed)}</span>
+        ${deltaCell(s.best_delta_aed)}
+        <button class="link-btn" data-recheck="${s.id}" type="button">Check now</button>
+        <button class="link-btn" data-forget="${s.id}" type="button">Forget</button>
+        <ul class="history-changes" hidden></ul>
+      </div>`).join('');
+  } catch (error) {
+    historyBody.innerHTML =
+      `<p class="muted">Could not load history: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function recheck(id, row) {
+  const list = row.querySelector('.history-changes');
+  list.hidden = false;
+  list.innerHTML = '<li><span class="spinner"></span>Re-checking…</li>';
+
+  try {
+    const response = await fetch(`/api/history/${id}/recheck`, { method: 'POST' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || response.statusText);
+
+    const changes = data.changes;
+    const rows = [
+      ...(changes.changed || []).map((o) =>
+        `<li>${deltaCell(o.delta_aed)} ${aed(o.previous_landed_aed)} → ${aed(o.landed_aed)}
+         · ${escapeHtml(o.store_label)} · ${escapeHtml(o.title.slice(0, 60))}</li>`),
+      ...(changes.appeared || []).map((o) =>
+        `<li><span class="delta flat">new</span> AED ${aed(o.landed_aed)}
+         · ${escapeHtml(o.store_label)} · ${escapeHtml(o.title.slice(0, 60))}</li>`),
+      ...(changes.disappeared || []).map((o) =>
+        `<li><span class="delta flat">gone</span> AED ${aed(o.landed_aed)}
+         · ${escapeHtml(o.store_label)} · ${escapeHtml(o.title.slice(0, 60))}</li>`),
+    ];
+
+    list.innerHTML = `<li><strong>${escapeHtml(changes.summary)}</strong></li>` + rows.join('');
+    loadHistory();
+
+    if (data.result) {
+      currentOffers = data.result.offers || [];
+      renderStores(data.result.stores || []);
+      renderRecommendation(data.result.recommendation);
+      sortOffers(sortSelect.value);
+      queryInput.value = changes.query;
+    }
+  } catch (error) {
+    list.innerHTML = `<li>Re-check failed: ${escapeHtml(error.message)}</li>`;
+  }
+}
+
+historyBody.addEventListener('click', async (event) => {
+  const recheckId = event.target.dataset?.recheck;
+  const forgetId = event.target.dataset?.forget;
+  if (recheckId) {
+    await recheck(recheckId, event.target.closest('.history-row'));
+  } else if (forgetId) {
+    await fetch(`/api/history/${forgetId}`, { method: 'DELETE' });
+    loadHistory();
+  }
+});
+
+$('history-refresh').addEventListener('click', loadHistory);
+
 // ---------- search ----------
 
 async function runSearch(event) {
@@ -204,6 +299,7 @@ async function runSearch(event) {
     renderRecommendation(data.recommendation);
     sortSelect.value = 'score';
     sortOffers('score');
+    loadHistory();
   } catch (error) {
     setStatus(`Could not reach the API: ${escapeHtml(error.message)}`, true);
   } finally {
@@ -213,6 +309,8 @@ async function runSearch(event) {
 
 form.addEventListener('submit', runSearch);
 sortSelect.addEventListener('change', () => sortOffers(sortSelect.value));
+
+loadHistory();
 
 // Deep-link support: /?q=airpods runs the search on load.
 const initial = new URLSearchParams(location.search).get('q');

@@ -13,7 +13,7 @@ import asyncio
 import json
 import sys
 
-from app import aggregator, browser, net
+from app import aggregator, browser, history, net
 from app.models import Market
 
 
@@ -144,35 +144,147 @@ def render(response) -> None:
     out("")
 
 
+def _markets(market: str):
+    if market == "local":
+        return [Market.LOCAL]
+    if market == "global":
+        return [Market.GLOBAL]
+    return None
+
+
+async def run_search(query: str, args):
+    return await aggregator.search(
+        query,
+        markets=_markets(args.market),
+        stores=args.stores.split(",") if args.stores else None,
+        limit_per_store=args.limit,
+        include_used=args.include_used,
+    )
+
+
+def render_history() -> None:
+    records = history.list_searches()
+    if not records:
+        out(f"\n{DIM}No saved searches yet — run a search first.{RESET}\n")
+        return
+
+    out(f"\n{BOLD}Saved searches{RESET}\n")
+    out(f"{BOLD}{'ID':<4}{'BEST (AED)':>12}  {'CHANGE':>10}  {'CHECKS':>7}  "
+        f"{'LAST CHECKED':<22}QUERY{RESET}")
+    out(DIM + "-" * 100 + RESET)
+    for r in records:
+        delta = r.best_delta
+        if delta is None:
+            change, colour = f"{G['dash']}", DIM
+        elif delta < 0:
+            change, colour = f"{money(delta)}", GREEN
+        elif delta > 0:
+            change, colour = f"+{money(delta)}", RED
+        else:
+            change, colour = "0", DIM
+        out(f"{r.id:<4}{money(r.latest_best_aed):>12}  {colour}{change:>10}{RESET}  "
+            f"{r.checks:>7}  {r.last_checked_at[:19].replace('T', ' '):<22}{r.query}")
+    out(f"\n{DIM}Re-check with: python cli.py --recheck <id>   (or --recheck all){RESET}\n")
+
+
+def render_changes(response, args) -> None:
+    """Show what moved since the previous run of this same search."""
+    if args.no_save:
+        return
+    search_id = history.record(
+        response, market=args.market, include_used=args.include_used
+    )
+    changes = history.compare(search_id)
+    if changes is None or changes.is_first_run:
+        out(f"{DIM}Saved as search #{search_id}. "
+            f"Re-run with: python cli.py --recheck {search_id}{RESET}\n")
+        return
+
+    out(f"{BOLD}Since last check{RESET}  {DIM}(search #{search_id}){RESET}")
+    out(f"  {changes.summary()}")
+    for offer in changes.changed[:8]:
+        colour = GREEN if offer.direction == "down" else RED
+        sign = "" if (offer.delta or 0) < 0 else "+"
+        out(f"    {colour}{sign}{money(offer.delta)} ({sign}{offer.pct:.1f}%){RESET}  "
+            f"{money(offer.previous_landed_aed)} {G['rarrow']} {money(offer.landed_aed)}  "
+            f"{DIM}{offer.store_label}{RESET}  {offer.title[:44]}")
+    for offer in changes.appeared[:4]:
+        out(f"    {DIM}new{RESET}      {money(offer.landed_aed):>17}  "
+            f"{DIM}{offer.store_label}{RESET}  {offer.title[:44]}")
+    for offer in changes.disappeared[:4]:
+        out(f"    {DIM}gone     {money(offer.landed_aed):>17}  "
+            f"{offer.store_label}  {offer.title[:44]}{RESET}")
+    out("")
+
+
+async def recheck(which: str, args) -> int:
+    records = history.list_searches()
+    if not records:
+        out("No saved searches to re-check.")
+        return 1
+
+    if which.lower() != "all":
+        try:
+            wanted = int(which)
+        except ValueError:
+            out(f"--recheck takes a numeric id or 'all', not {which!r}")
+            return 2
+        records = [r for r in records if r.id == wanted]
+        if not records:
+            out(f"No saved search #{which}")
+            return 1
+
+    for record_ in records:
+        out(f"\n{BOLD}Re-checking #{record_.id}: {record_.query}{RESET}")
+        args.market = record_.market
+        args.include_used = record_.include_used
+        response = await run_search(record_.query, args)
+        render(response)
+        render_changes(response, args)
+    return 0
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser(description="Compare a product across UAE and global stores")
-    parser.add_argument("query", help="what you want to buy")
+    parser.add_argument("query", nargs="?", help="what you want to buy")
     parser.add_argument("--market", choices=["all", "local", "global"], default="all")
     parser.add_argument("--stores", help="comma-separated store keys to limit the search")
     parser.add_argument("--limit", type=int, default=6, help="results per store")
     parser.add_argument("--json", action="store_true", help="emit raw JSON instead of a table")
     parser.add_argument("--include-used", action="store_true",
                         help="include refurbished/renewed/used listings")
+    parser.add_argument("--history", action="store_true",
+                        help="list past searches and how their prices have moved")
+    parser.add_argument("--recheck", metavar="ID",
+                        help="re-run a saved search by id, or 'all'")
+    parser.add_argument("--forget", type=int, metavar="ID",
+                        help="delete a saved search and its price history")
+    parser.add_argument("--no-save", action="store_true",
+                        help="do not record this search in the history")
     args = parser.parse_args()
 
-    markets = None
-    if args.market == "local":
-        markets = [Market.LOCAL]
-    elif args.market == "global":
-        markets = [Market.GLOBAL]
-
     try:
-        response = await aggregator.search(
-            args.query,
-            markets=markets,
-            stores=args.stores.split(",") if args.stores else None,
-            limit_per_store=args.limit,
-            include_used=args.include_used,
-        )
+        if args.forget is not None:
+            gone = history.delete(args.forget)
+            out(f"{'Deleted' if gone else 'No such'} saved search #{args.forget}")
+            return 0 if gone else 1
+
+        if args.history:
+            render_history()
+            return 0
+
+        if args.recheck:
+            return await recheck(args.recheck, args)
+
+        if not args.query:
+            parser.error("give a query, or use --history / --recheck")
+
+        response = await run_search(args.query, args)
         if args.json:
             print(json.dumps(response.model_dump(mode="json"), indent=2, ensure_ascii=False))
         else:
             render(response)
+            render_changes(response, args)
         return 0 if response.offers else 1
     finally:
         await net.close_client()

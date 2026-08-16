@@ -360,3 +360,57 @@ async def test_kept_count_matches_the_ranked_table():
     shown = Counter(o.store for o in result.offers)
     for status in result.stores:
         assert status.kept_count == shown.get(status.store, 0)
+
+
+# ------------------------------------------------------- history endpoints ---
+
+def test_search_is_tracked_and_listed(client):
+    client.get("/api/search", params={"q": "sony wh-1000xm5"})
+    body = client.get("/api/history").json()
+
+    tracked = [s for s in body["searches"] if s["query"] == "sony wh-1000xm5"]
+    assert tracked, "a search should appear in the history"
+    assert tracked[0]["checks"] >= 1
+
+
+def test_store_filtered_searches_are_not_tracked(client):
+    """Limiting to one store is a diagnostic, not something worth watching."""
+    client.get("/api/search", params={"q": "diagnostic only probe", "stores": "ebay"})
+    body = client.get("/api/history").json()
+    assert not [s for s in body["searches"] if s["query"] == "diagnostic only probe"]
+
+
+def test_opting_out_of_tracking_is_honoured(client):
+    client.get("/api/search", params={"q": "untracked probe", "save_history": "false"})
+    body = client.get("/api/history").json()
+    assert not [s for s in body["searches"] if s["query"] == "untracked probe"]
+
+
+def test_recheck_reruns_the_search_and_reports_movement(client):
+    client.get("/api/search", params={"q": "sony wh-1000xm5"})
+    listed = client.get("/api/history").json()["searches"]
+    search_id = next(s["id"] for s in listed if s["query"] == "sony wh-1000xm5")
+
+    response = client.post(f"/api/history/{search_id}/recheck")
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["result"]["offers"], "recheck must return fresh results"
+    assert body["changes"]["summary"]
+    assert body["changes"]["search_id"] == search_id
+
+
+def test_history_detail_and_delete(client):
+    client.get("/api/search", params={"q": "sony wh-1000xm5"})
+    listed = client.get("/api/history").json()["searches"]
+    search_id = next(s["id"] for s in listed if s["query"] == "sony wh-1000xm5")
+
+    assert client.get(f"/api/history/{search_id}").status_code == 200
+    assert client.delete(f"/api/history/{search_id}").status_code == 200
+    assert client.get(f"/api/history/{search_id}").status_code == 404
+
+
+def test_unknown_history_ids_are_404(client):
+    assert client.get("/api/history/999999").status_code == 404
+    assert client.post("/api/history/999999/recheck").status_code == 404
+    assert client.delete("/api/history/999999").status_code == 404
