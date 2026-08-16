@@ -428,3 +428,82 @@ def test_store_truncation_without_a_query_is_unfiltered():
     provider = amazon_ae()
     results = _amazon_style_results(provider)
     assert len(provider._postprocess(results, 4)) == 4
+
+
+# ---- AliExpress falls back to structure when its JSON blob is gone -------
+
+ALIEXPRESS_UTILITY_MARKUP = """<html><body><div class="list--gallery--C2f2tvm">
+  <div class="search-item-card-wrapper-gallery">
+    <a href="/item/1005006123456789.html" class="search-card-item">
+      <img src="//ae01.alicdn.com/kf/S1.jpg" alt="Sony WH-1000XM5 Wireless Headphones">
+      <h3 class="kn_kn">Sony WH-1000XM5 Wireless Noise Cancelling Headphones</h3>
+      <div class="kn_ko"><span>US $268.99</span></div></a></div>
+  <div class="search-item-card-wrapper-gallery">
+    <a href="/item/1005007987654321.html" class="search-card-item">
+      <img src="//ae01.alicdn.com/kf/S2.jpg" alt="Sony WH-1000XM5 Headset">
+      <h3 class="kn_kn">Sony WH-1000XM5 Noise Cancelling Headset Black</h3>
+      <div class="kn_ko"><span>US $289.50</span></div></a></div>
+</div></body></html>"""
+
+
+def test_aliexpress_parses_utility_class_markup_without_a_json_blob():
+    """AliExpress ships class names like `kn_ko` that identify nothing, and the
+    inline JSON is not always present — live runs reported "fetched but nothing
+    parsed". Structure works where class names cannot."""
+    offers = aliexpress()._parse(ALIEXPRESS_UTILITY_MARKUP, limit=6)
+
+    assert len(offers) == 2
+    first = next(o for o in offers if "Wireless Noise" in o.title)
+    assert first.price == 268.99
+    assert first.currency == "USD"
+    assert first.url.endswith("/item/1005006123456789.html")
+
+
+def test_aliexpress_still_prefers_the_json_blob_when_present():
+    offers = aliexpress()._parse(load("aliexpress_search.html"), limit=6)
+    assert len(offers) == 2
+    assert any(o.review_count for o in offers), "blob carries data the DOM lacks"
+
+
+# ---- eBay primes a session before searching ------------------------------
+
+def test_ebay_visits_the_homepage_before_searching(monkeypatch):
+    """eBay answers 403 to a cold search with no cookies and no referer."""
+    import asyncio
+
+    from app.providers import ebay as module
+
+    calls: list[str] = []
+
+    class FakeResponse:
+        text = load("ebay_search.html")
+
+    async def fake_fetch(url, **kwargs):
+        calls.append(url)
+        return FakeResponse()
+
+    monkeypatch.setattr(module, "fetch", fake_fetch)
+    offers = asyncio.run(module.make().search_http("sony wh-1000xm5", 5))
+
+    assert calls[0] == module.ORIGIN, "must land on the site before searching"
+    assert "/sch/i.html" in calls[1]
+    assert offers
+
+
+def test_ebay_search_proceeds_even_if_priming_fails(monkeypatch):
+    """A failed warm-up must not take the store down with it."""
+    import asyncio
+
+    from app.net import FetchError
+    from app.providers import ebay as module
+
+    class FakeResponse:
+        text = load("ebay_search.html")
+
+    async def fake_fetch(url, **kwargs):
+        if url == module.ORIGIN:
+            raise FetchError("HTTP 503", kind="blocked")
+        return FakeResponse()
+
+    monkeypatch.setattr(module, "fetch", fake_fetch)
+    assert asyncio.run(module.make().search_http("sony wh-1000xm5", 5))

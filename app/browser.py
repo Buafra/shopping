@@ -197,22 +197,44 @@ async def render(
         "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
     )
 
+    page = None
     try:
         page = await context.new_page()
 
         async def _route(route, request):
-            if request.resource_type in _BLOCKED_RESOURCES:
-                await route.abort()
-            else:
-                await route.continue_()
+            try:
+                if request.resource_type in _BLOCKED_RESOURCES:
+                    await route.abort()
+                else:
+                    await route.continue_()
+            except Exception:
+                # The page can be torn down mid-flight (cancellation, or the
+                # site aborting navigation). A route handler that raises here
+                # leaves an orphaned future nobody awaits, which surfaces later
+                # as "Future exception was never retrieved".
+                pass
 
         await page.route("**/*", _route)
 
-        await page.goto(
-            url,
-            wait_until="domcontentloaded",
-            timeout=int(SETTINGS.browser_timeout * 1000),
+        # Keep navigation inside the phase budget. If goto is still running
+        # when the caller's timeout fires, Playwright's own future errors with
+        # ERR_ABORTED after the context is gone and prints an unretrieved
+        # exception traceback over the results.
+        goto_timeout = max(
+            5.0, min(SETTINGS.browser_timeout, SETTINGS.browser_phase_timeout - 8.0)
         )
+        try:
+            await page.goto(
+                url, wait_until="domcontentloaded", timeout=int(goto_timeout * 1000)
+            )
+        except Exception as exc:
+            # A partial page still parses; only give up if nothing loaded.
+            log.debug("navigation to %s did not complete: %s", url, exc)
+            try:
+                if not (await page.content()).strip():
+                    raise
+            except Exception:
+                raise
 
         if wait_for:
             try:
@@ -221,8 +243,20 @@ async def render(
                 log.debug("selector %r never appeared on %s", wait_for, url)
 
         if extra_wait_ms:
-            await page.wait_for_timeout(extra_wait_ms)
+            try:
+                await page.wait_for_timeout(extra_wait_ms)
+            except Exception:
+                pass
 
         return await page.content()
     finally:
-        await context.close()
+        # Close the page before the context so in-flight navigations are torn
+        # down in order; shielded so cancellation cannot skip the cleanup and
+        # leak a browser context per failed store.
+        for closer in (page, context):
+            if closer is None:
+                continue
+            try:
+                await asyncio.shield(closer.close())
+            except Exception:
+                pass

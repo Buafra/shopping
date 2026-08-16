@@ -17,6 +17,7 @@ from ..config import STORES
 from ..models import Offer
 from ..net import (clean_text, extract_json_object, fetch, parse_int,
                    parse_price, parse_rating)
+from ..structural import parse_cards
 from .base import Provider
 
 ORIGIN = "https://www.aliexpress.com"
@@ -103,6 +104,26 @@ class AliExpressProvider(Provider):
         return offers
 
     def _parse_dom(self, tree, limit: int) -> list[Offer]:
+        """DOM fallback for when the inline JSON blob is missing or renamed.
+
+        AliExpress ships utility-class markup with no product-bearing class
+        names, so cards are found structurally first — the same approach that
+        recovered Carrefour — and only then by the older link-scraping pass.
+        """
+        structural = [
+            self.make_offer(
+                title=card.title, url=card.url, image=card.image,
+                price=card.price, rating=card.rating,
+                review_count=card.review_count,
+            )
+            for card in parse_cards(
+                tree.html or "", origin=ORIGIN, link_match="/item/",
+                max_cards=limit * 2,
+            )
+        ]
+        if structural:
+            return structural
+
         offers: list[Offer] = []
         for card in tree.css("a[href*='/item/']"):
             href = card.attributes.get("href", "")

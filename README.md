@@ -208,7 +208,11 @@ fix on its own:
 | Store | Result |
 |---|---|
 | **Amazon.ae** | works — offers with ratings and review counts, over plain HTTP in ~1s |
-| Noon UAE | connection refused at protocol level (`ERR_HTTP2_PROTOCOL_ERROR`); HTTP/1.1 fallback added, unverified |
+| Newegg | works — good coverage for PC parts |
+| Amazon.com | works |
+| AliExpress | now parsed structurally; previously "fetched but nothing parsed" |
+| eBay | answered 403 to a cold search; session priming added |
+| Noon UAE | no response at all within 20s, and the browser navigation is aborted — blocking at connection level, not by status code |
 | Sharaf DG | serves a **CAPTCHA** to headless browsers; page loads with zero prices in it |
 | **Carrefour UAE** | works — 6 offers in ~2.5s by parsing the search page (its JSON API is retired) |
 
@@ -230,6 +234,20 @@ stops costing every search the full timeout budget:
 DISABLED_STORES=sharaf_dg
 ```
 
+### PC parts
+
+There is nothing special to enable — it is the same search. Newegg and
+Amazon.com cover global PC hardware, Amazon.ae and Carrefour cover local:
+
+```bash
+python cli.py "rtx 4070"
+python cli.py "ryzen 7 7800x3d" --market global
+```
+
+Landed cost matters more here than anywhere: a GPU that looks cheap on a US
+site attracts 5% duty and 5% VAT on a high-value item, which routinely erases
+the gap against local stock.
+
 ## When a store breaks
 
 Stores redesign, and a `parse` failure means that store's selectors are stale.
@@ -250,7 +268,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 196 tests
+python -m pytest -q      # 200 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in

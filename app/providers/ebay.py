@@ -36,7 +36,26 @@ class EbayProvider(Provider):
         return f"{ORIGIN}/sch/i.html?_nkw={self.q(query)}&_sop=15&LH_PrefLoc=2"
 
     async def search_http(self, query: str, limit: int) -> list[Offer]:
-        resp = await fetch(self._url(query), headers={"Accept-Language": "en-US,en;q=0.9"})
+        """Fetch search results, priming a session first.
+
+        eBay answers 403 to a search request that arrives with no cookies and
+        no referer — a browser never does that, it lands on the site first.
+        The shared client keeps the cookie jar, so one cheap homepage request
+        makes the search look like what it is: a second page view.
+        """
+        try:
+            await fetch(ORIGIN, headers={"Accept-Language": "en-US,en;q=0.9"})
+        except Exception:
+            pass  # priming is best-effort; the search may still succeed
+
+        resp = await fetch(
+            self._url(query),
+            headers={
+                "Accept-Language": "en-US,en;q=0.9",
+                "Referer": f"{ORIGIN}/",
+                "Sec-Fetch-Site": "same-origin",
+            },
+        )
         return self._parse(resp.text, limit)
 
     async def search_browser(self, query: str, limit: int) -> list[Offer]:
