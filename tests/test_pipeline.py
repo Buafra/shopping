@@ -323,3 +323,40 @@ def test_store_deadline_covers_both_phases():
     assert agg.STORE_DEADLINE >= (
         SETTINGS.http_phase_timeout + SETTINGS.browser_phase_timeout
     )
+
+
+# ------------------------------------------------- honest contribution ----
+
+@pytest.mark.asyncio
+async def test_store_that_contributes_nothing_is_reported_as_such(monkeypatch):
+    """A store can fetch six listings and have all six filtered out. Reporting
+    only the fetched count makes it look like a success it was not."""
+    from app.providers.ebay import EbayProvider
+
+    async def only_accessories(self, query, limit):
+        return [
+            self.make_offer(title="Carrying Case for Sony WH-1000XM5",
+                            url="https://www.ebay.com/itm/1", price=12.0),
+            self.make_offer(title="Ear Pads for Sony WH-1000XM5",
+                            url="https://www.ebay.com/itm/2", price=9.0),
+        ]
+
+    monkeypatch.setattr(EbayProvider, "search_http", only_accessories)
+
+    result = await aggregator.search("sony wh-1000xm5")
+    ebay = next(s for s in result.stores if s.store == "ebay")
+
+    assert ebay.offer_count > 0, "it did fetch listings"
+    assert ebay.kept_count == 0, "but contributed none"
+    assert any("none matched" in note for note in result.notes)
+
+
+@pytest.mark.asyncio
+async def test_kept_count_matches_the_ranked_table():
+    """Per-store counts must add up to what the user actually sees."""
+    result = await aggregator.search("sony wh-1000xm5")
+
+    from collections import Counter
+    shown = Counter(o.store for o in result.offers)
+    for status in result.stores:
+        assert status.kept_count == shown.get(status.store, 0)

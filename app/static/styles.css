@@ -209,6 +209,7 @@ td.num, th.num { text-align: right; white-space: nowrap; font-variant-numeric: t
   border-left: 3px solid var(--good); border-radius: 8px; padding: 11px 13px; font-size: 13px;
 }
 .store-card.failed { border-left-color: var(--bad); }
+.store-card.partial { border-left-color: var(--warn); }
 .store-card strong { display: block; margin-bottom: 3px; }
 .store-card .why { color: var(--muted); font-size: 12px; word-break: break-word; }
 

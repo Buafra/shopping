@@ -63,6 +63,10 @@ class StoreStatus(BaseModel):
     market: Market
     ok: bool
     offer_count: int = 0
+    # How many of this store's offers survived cross-store filtering. A store
+    # can fetch six listings and contribute none — reporting only the fetched
+    # count makes a store that added nothing look like a success.
+    kept_count: int | None = None
     elapsed_ms: int = 0
     error: str | None = None
     # "unreachable" | "timeout" | "blocked" | "http_error" | "no_results" | "parse"

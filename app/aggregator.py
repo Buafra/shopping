@@ -156,6 +156,22 @@ async def search(
     ranked = scoring.rank(result.offers)[:max_results]
     recommendation = scoring.build_recommendation(ranked)
 
+    survivors: dict[str, int] = {}
+    for offer in ranked:
+        survivors[offer.store] = survivors.get(offer.store, 0) + 1
+    for status in statuses:
+        status.kept_count = survivors.get(status.store, 0)
+
+    contributed_nothing = [
+        s for s in statuses if s.ok and not s.kept_count
+    ]
+    if contributed_nothing:
+        notes.append(
+            "Returned results but none matched the search: "
+            + ", ".join(s.store_label for s in contributed_nothing)
+            + ". Their listings were accessories, other models or refurbished units."
+        )
+
     failed = [s for s in statuses if not s.ok]
     if failed:
         notes.append(

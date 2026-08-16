@@ -139,12 +139,14 @@ function renderOffers(offers) {
 function renderStores(stores) {
   storeLog.hidden = false;
   storeLogBody.innerHTML = stores.map((s) => `
-    <div class="store-card ${s.ok ? '' : 'failed'}">
+    <div class="store-card ${s.ok ? (s.kept_count === 0 ? 'partial' : '') : 'failed'}">
       <strong>${escapeHtml(s.store_label)}</strong>
       <span class="muted">${s.market} &middot; ${(s.elapsed_ms / 1000).toFixed(1)}s${
         s.method ? ' &middot; ' + escapeHtml(s.method) : ''}</span>
       <div class="why">${s.ok
-        ? `${s.offer_count} offer${s.offer_count === 1 ? '' : 's'}`
+        ? (s.kept_count === null || s.kept_count === undefined || s.kept_count === s.offer_count
+            ? `${s.offer_count} offer${s.offer_count === 1 ? '' : 's'}`
+            : `${s.offer_count} fetched, <strong>${s.kept_count}</strong> matched`)
         : escapeHtml(s.error || 'no results')}</div>
     </div>`).join('');
 }

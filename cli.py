@@ -125,8 +125,17 @@ def render(response) -> None:
     out(f"\n{BOLD}Store coverage{RESET}")
     for status in response.stores:
         mark = f"{GREEN}{G['tick']}{RESET}" if status.ok else f"{RED}{G['cross']}{RESET}"
-        detail = (f"{status.offer_count} offers" if status.ok
-                  else (status.error or "no results")[:64])
+        if status.ok:
+            kept = status.kept_count
+            detail = (
+                f"{status.offer_count} offers"
+                if kept is None or kept == status.offer_count
+                else f"{status.offer_count} offers, {kept} matched"
+            )
+            if kept == 0:
+                mark = f"{YELLOW}!{RESET}"
+        else:
+            detail = (status.error or "no results")[:64]
         out(f"  {mark} {status.store_label:<18} {DIM}{status.elapsed_ms/1000:>5.1f}s  "
               f"{detail}{RESET}")
 

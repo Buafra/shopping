@@ -169,7 +169,10 @@ pretending otherwise.**
   zero results. Every parser is written to degrade to "no offers" rather than
   return wrong data, and each store's outcome — including the error — is shown
   in the response and in the UI's *Store coverage* panel. A comparison built
-  from 5 of 8 stores says so.
+  from 5 of 8 stores says so. Coverage reports fetched *and* matched counts
+  separately (`offer_count` / `kept_count`) — a store can return six listings
+  and contribute none, and showing only the fetched number makes that look
+  like a success.
 - **Failures tell you which thing to fix.** Each store failure is classified
   (`error_kind` in the API), because these need opposite responses:
 
@@ -247,7 +250,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 192 tests
+python -m pytest -q      # 194 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in
