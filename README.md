@@ -100,8 +100,14 @@ python -m pip install -r requirements.txt
 python -m playwright install chromium
 
 python cli.py "sony wh-1000xm5"
-python -m uvicorn app.main:app --reload
+python run.py                     # web UI; picks a port that will bind
 ```
+
+If `uvicorn app.main:app` fails with **`WinError 10013`**, the port is not in
+use — Windows has reserved it for Hyper-V/WSL and refuses to bind it. Either
+run `python run.py`, which probes and moves to a free port automatically, or
+pass a higher one yourself (`--port 8600`). To see the reserved ranges:
+`netsh interface ipv4 show excludedportrange protocol=tcp`.
 
 The CLI detects a console that cannot render `★ ▶ —`, falls back to ASCII, and
 drops colour codes when output is piped to a file — so a cp1252 console gets
@@ -170,7 +176,7 @@ pretending otherwise.**
 ## Tests
 
 ```bash
-python -m pytest -q      # 134 tests
+python -m pytest -q      # 137 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in
@@ -196,4 +202,5 @@ app/
   providers/     one module per store
   static/        web UI
 cli.py           terminal interface
+run.py           web launcher with automatic port selection
 ```

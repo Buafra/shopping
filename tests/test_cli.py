@@ -105,3 +105,44 @@ def test_render_handles_empty_response(capsys):
 def test_money_formats_and_handles_missing():
     assert cli.money(1299.0) == "1,299"
     assert cli.money(None) == cli.G["dash"]
+
+
+# --------------------------------------------------------------- launcher ---
+
+def test_launcher_detects_an_occupied_port():
+    """Windows reserves ports and refuses to bind them; the launcher must
+    notice before uvicorn dies with WinError 10013."""
+    import socket
+
+    import run
+
+    held = socket.socket()
+    held.bind(("127.0.0.1", 0))
+    held.listen(1)
+    taken = held.getsockname()[1]
+    try:
+        assert run.port_is_bindable(taken, "127.0.0.1") is False
+        assert run.pick_port("127.0.0.1", taken) != taken
+    finally:
+        held.close()
+
+
+def test_launcher_prefers_the_requested_port_when_free():
+    import socket
+
+    import run
+
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    free = probe.getsockname()[1]
+    probe.close()
+
+    assert run.pick_port("127.0.0.1", free) == free
+
+
+def test_launcher_always_returns_a_usable_port():
+    import run
+
+    port = run.pick_port("127.0.0.1", None)
+    assert 1 <= port <= 65535
+    assert run.port_is_bindable(port, "127.0.0.1")
