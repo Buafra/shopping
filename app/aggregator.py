@@ -12,7 +12,7 @@ import asyncio
 import logging
 import time
 
-from . import fx, matching, pricing, scoring
+from . import blocklist, fx, matching, pricing, scoring
 from .config import SETTINGS
 from .models import Market, Offer, SearchResponse, StoreStatus
 from .providers import Provider, build_all
@@ -122,6 +122,23 @@ async def search(
     if not providers:
         raise ValueError("no stores match the requested filters")
 
+    # Skip stores that refused us recently. Explicitly naming stores overrides
+    # this — asking for a store by name is a request to try it regardless.
+    skipped: dict[str, str] = {}
+    if not stores and SETTINGS.skip_blocked_hours > 0:
+        try:
+            skipped = blocklist.blocked(SETTINGS.skip_blocked_hours)
+        except Exception:
+            log.warning("could not read the blocked-store list", exc_info=True)
+        if skipped:
+            remaining = [p for p in providers if p.spec.key not in skipped]
+            # Never skip everything: with no store left there is nothing to
+            # compare, and an out-of-date record should not silence the app.
+            if remaining:
+                providers = remaining
+            else:
+                skipped = {}
+
     sem = asyncio.Semaphore(SETTINGS.max_concurrent_stores)
 
     rates_task = asyncio.create_task(fx.refresh_rates())
@@ -137,6 +154,22 @@ async def search(
         statuses.append(status)
 
     statuses.sort(key=lambda s: (s.market.value, s.store_label))
+
+    # Record fresh blocks so the next search does not pay for them again.
+    for status in statuses:
+        if status.error_kind in blocklist.BLOCKING_KINDS:
+            try:
+                blocklist.remember(status.store, status.error or "blocked")
+            except Exception:
+                log.warning("could not record block for %s", status.store, exc_info=True)
+
+    if skipped:
+        notes.append(
+            f"Skipped {len(skipped)} store(s) that blocked us recently: "
+            + ", ".join(sorted(skipped))
+            + f". They are retried automatically after "
+            f"{SETTINGS.skip_blocked_hours:.0f}h — or now, with --stores."
+        )
 
     if not all_offers:
         notes.append(_diagnose_total_failure(statuses))

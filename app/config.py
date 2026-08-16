@@ -50,6 +50,14 @@ class Settings:
 
     # Behaviour
     use_browser_fallback: bool = _env_bool("USE_BROWSER_FALLBACK", True)
+    # Perform the TLS handshake with a browser's fingerprint where curl_cffi
+    # is installed. Stores that block on JA3 reject the default Python
+    # handshake before any header is read, so this is the one thing headers
+    # cannot fix.
+    use_tls_impersonation: bool = _env_bool("USE_TLS_IMPERSONATION", True)
+    # A store that answered with a CAPTCHA will answer the same way an hour
+    # later, so remember it and stop spending the timeout budget on it.
+    skip_blocked_hours: float = _env_float("SKIP_BLOCKED_HOURS", 24.0)
     proxy_url: str | None = os.environ.get("SCRAPER_PROXY") or None
 
     # Landed-cost assumptions for imports into the UAE.

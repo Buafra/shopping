@@ -139,17 +139,27 @@ async def fetch(
     method: str = "GET",
     json_body: Any = None,
 ) -> httpx.Response:
+    from . import impersonate
+
     client = await get_client()
     merged = base_headers()
     if headers:
         merged.update(headers)
 
+    use_impersonation = impersonate.enabled()
+
     last_exc: Exception | None = None
     for attempt in range(SETTINGS.max_retries + 1):
         try:
-            resp = await client.request(
-                method, url, headers=merged, params=params, json=json_body
-            )
+            if use_impersonation:
+                resp = await impersonate.fetch(
+                    url, headers=merged, params=params,
+                    method=method, json_body=json_body,
+                )
+            else:
+                resp = await client.request(
+                    method, url, headers=merged, params=params, json=json_body
+                )
             if resp.status_code in RETRY_STATUS and attempt < SETTINGS.max_retries:
                 await asyncio.sleep(1.5 * (2**attempt) + random.random())
                 merged["User-Agent"] = random.choice(USER_AGENTS)
@@ -171,6 +181,16 @@ async def fetch(
         except FetchError:
             raise
         except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last_exc = exc
+            if attempt < SETTINGS.max_retries:
+                await asyncio.sleep(1.5 * (2**attempt) + random.random())
+                continue
+            raise classify_transport_error(exc, url) from exc
+        except Exception as exc:
+            # curl_cffi raises its own exception types; treat them the same way
+            # so a failure reads identically whichever transport produced it.
+            if not use_impersonation:
+                raise
             last_exc = exc
             if attempt < SETTINGS.max_retries:
                 await asyncio.sleep(1.5 * (2**attempt) + random.random())

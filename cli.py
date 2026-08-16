@@ -13,7 +13,7 @@ import asyncio
 import json
 import sys
 
-from app import aggregator, browser, history, net
+from app import aggregator, blocklist, browser, history, net
 from app.models import Market
 
 
@@ -187,6 +187,23 @@ def render_history() -> None:
     out(f"\n{DIM}Re-check with: python cli.py --recheck <id>   (or --recheck all){RESET}\n")
 
 
+def render_blocked() -> None:
+    from app.config import SETTINGS
+
+    entries = blocklist.blocked(SETTINGS.skip_blocked_hours)
+    if not entries:
+        out(f"\n{DIM}No stores are currently being skipped.{RESET}\n")
+        return
+
+    out(f"\n{BOLD}Stores being skipped{RESET}  "
+        f"{DIM}(retried automatically after {SETTINGS.skip_blocked_hours:.0f}h)"
+        f"{RESET}\n")
+    for store, reason in sorted(entries.items()):
+        out(f"  {RED}{G['cross']}{RESET} {store:<16}{DIM}{reason[:78]}{RESET}")
+    out(f"\n{DIM}Retry one now: python cli.py --unblock <store>   "
+        f"(or --unblock all){RESET}\n")
+
+
 def render_changes(response, args) -> None:
     """Show what moved since the previous run of this same search."""
     if args.no_save:
@@ -265,6 +282,10 @@ async def main() -> int:
                         help="delete a saved search and its price history")
     parser.add_argument("--no-save", action="store_true",
                         help="do not record this search in the history")
+    parser.add_argument("--blocked", action="store_true",
+                        help="list stores currently being skipped as blocked")
+    parser.add_argument("--unblock", metavar="STORE",
+                        help="retry a blocked store now, or 'all'")
     args = parser.parse_args()
 
     try:
@@ -272,6 +293,17 @@ async def main() -> int:
             gone = history.delete(args.forget)
             out(f"{'Deleted' if gone else 'No such'} saved search #{args.forget}")
             return 0 if gone else 1
+
+        if args.blocked:
+            render_blocked()
+            return 0
+
+        if args.unblock:
+            target = None if args.unblock.lower() == "all" else args.unblock
+            removed = blocklist.clear(target)
+            out(f"Cleared {removed} blocked-store record(s); they will be tried "
+                f"again on the next search.")
+            return 0
 
         if args.history:
             render_history()

@@ -4,6 +4,11 @@ httpx==0.28.1
 pydantic==2.10.4
 selectolax==0.3.27
 playwright==1.49.1
+
+# Optional: performs the TLS handshake with a browser fingerprint. Stores that
+# block on JA3 reject the default Python handshake before reading any header.
+# The app runs without it; those stores simply stay blocked.
+curl_cffi==0.16.0
 python-multipart==0.0.20
 
 # dev / test

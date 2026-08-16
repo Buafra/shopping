@@ -434,21 +434,20 @@ def test_unknown_history_ids_are_404(client):
 def test_scraper_proxy_is_translated_for_the_browser(raw, expected, monkeypatch):
     """The browser fallback must use the proxy too. Wiring it only into the
     HTTP client leaves the browser going out on the real IP, so the setting
-    half-works in a way nothing reports."""
-    import importlib
+    half-works in a way nothing reports.
 
-    monkeypatch.setenv("SCRAPER_PROXY", raw)
+    Settings are patched rather than reloaded: reloading app.net rebinds
+    FetchError, and providers that imported the original class then stop
+    recognising it, which silently misclassifies blocks in later tests.
+    """
+    from dataclasses import replace
+
     import app.browser as browser_module
-    import app.config as config_module
 
-    importlib.reload(config_module)
-    importlib.reload(browser_module)
-    try:
-        assert browser_module.proxy_settings() == expected
-    finally:
-        monkeypatch.delenv("SCRAPER_PROXY", raising=False)
-        importlib.reload(config_module)
-        importlib.reload(browser_module)
+    monkeypatch.setattr(
+        browser_module, "SETTINGS", replace(browser_module.SETTINGS, proxy_url=raw or None)
+    )
+    assert browser_module.proxy_settings() == expected
 
 
 def test_health_reports_proxy_state_without_leaking_credentials(client):
@@ -467,40 +466,116 @@ def test_placeholder_proxies_are_ignored_rather_than_attempted(raw, monkeypatch)
     """Pasting the documented example verbatim points every request at a host
     that does not exist. That fails identically to having no internet, takes
     every store down at once, and reads as a catastrophic outage."""
-    import importlib
+    from dataclasses import replace
 
-    monkeypatch.setenv("SCRAPER_PROXY", raw)
     import app.browser as browser_module
-    import app.config as config_module
     import app.net as net_module
 
-    importlib.reload(config_module)
-    importlib.reload(browser_module)
-    importlib.reload(net_module)
-    try:
-        assert browser_module.proxy_settings() is None
-        assert net_module._usable_proxy() is None
-    finally:
-        monkeypatch.delenv("SCRAPER_PROXY", raising=False)
-        for module in (config_module, browser_module, net_module):
-            importlib.reload(module)
+    patched = replace(browser_module.SETTINGS, proxy_url=raw or None)
+    monkeypatch.setattr(browser_module, "SETTINGS", patched)
+    monkeypatch.setattr(net_module, "SETTINGS", patched)
+
+    assert browser_module.proxy_settings() is None
+    assert net_module._usable_proxy() is None
 
 
 def test_a_real_proxy_is_still_used(monkeypatch):
-    import importlib
+    from dataclasses import replace
 
-    monkeypatch.setenv("SCRAPER_PROXY", "http://u:p@gate.brightdata.io:22225")
     import app.browser as browser_module
-    import app.config as config_module
     import app.net as net_module
 
-    importlib.reload(config_module)
-    importlib.reload(browser_module)
-    importlib.reload(net_module)
+    patched = replace(
+        browser_module.SETTINGS, proxy_url="http://u:p@gate.brightdata.io:22225"
+    )
+    monkeypatch.setattr(browser_module, "SETTINGS", patched)
+    monkeypatch.setattr(net_module, "SETTINGS", patched)
+
+    assert browser_module.proxy_settings()["server"] == "http://gate.brightdata.io:22225"
+    assert net_module._usable_proxy()
+
+
+# --------------------------------------------------- skipping blocked stores ---
+
+@pytest.mark.asyncio
+async def test_a_blocked_store_is_recorded_and_then_skipped(monkeypatch):
+    """A CAPTCHA is not a transient fault. Retrying it every search spends the
+    full timeout budget to be refused again."""
+    from app import blocklist
+    from app.net import FetchError
+    from app.providers.ebay import EbayProvider
+
+    blocklist.clear()
+
+    async def refuse(self, query, limit):
+        raise FetchError("HTTP 403 from www.ebay.com", kind="blocked")
+
+    monkeypatch.setattr(EbayProvider, "search_http", refuse)
+    monkeypatch.setattr(EbayProvider, "search_browser", refuse)
+
+    first = await aggregator.search("sony wh-1000xm5")
+    assert any(s.store == "ebay" for s in first.stores), "tried on the first run"
+    assert "ebay" in blocklist.blocked()
+
+    second = await aggregator.search("sony wh-1000xm5")
+    assert not any(s.store == "ebay" for s in second.stores), "skipped on the second"
+    assert any("blocked us recently" in note for note in second.notes)
+
+    blocklist.clear()
+
+
+@pytest.mark.asyncio
+async def test_naming_a_store_explicitly_overrides_the_skip():
+    """Asking for a store by name is a request to try it regardless."""
+    from app import blocklist
+
+    blocklist.remember("ebay", "served a bot-detection interstitial")
     try:
-        assert browser_module.proxy_settings()["server"] == "http://gate.brightdata.io:22225"
-        assert net_module._usable_proxy()
+        result = await aggregator.search("sony wh-1000xm5", stores=["ebay"])
+        assert [s.store for s in result.stores] == ["ebay"]
     finally:
-        monkeypatch.delenv("SCRAPER_PROXY", raising=False)
-        for module in (config_module, browser_module, net_module):
-            importlib.reload(module)
+        blocklist.clear()
+
+
+@pytest.mark.asyncio
+async def test_skipping_never_empties_the_comparison():
+    """If every store is on the list, an out-of-date record must not silence
+    the app entirely — better to try them all than return nothing."""
+    from app import blocklist
+    from app.config import STORES
+
+    for key in STORES:
+        blocklist.remember(key, "blocked")
+    try:
+        result = await aggregator.search("sony wh-1000xm5")
+        assert result.stores, "all stores skipped would leave nothing to compare"
+    finally:
+        blocklist.clear()
+
+
+def test_impersonation_is_optional_and_reports_itself():
+    """The app must run identically without curl_cffi installed."""
+    from app import impersonate
+
+    assert isinstance(impersonate.is_available(), bool)
+    assert isinstance(impersonate.enabled(), bool)
+
+
+def test_impersonated_response_exposes_what_providers_read():
+    from app.impersonate import ImpersonatedResponse
+
+    class Raw:
+        status_code = 200
+        text = "<html>ok</html>"
+        headers = {"content-type": "text/html"}
+        url = "https://www.noon.com/uae-en/search/"
+        http_version = 2
+
+        def json(self):
+            return {"ok": True}
+
+    wrapped = ImpersonatedResponse(Raw())
+    assert wrapped.status_code == 200
+    assert wrapped.text == "<html>ok</html>"
+    assert wrapped.json() == {"ok": True}
+    assert wrapped.http_version == "HTTP/2"

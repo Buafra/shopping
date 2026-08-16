@@ -307,6 +307,38 @@ Landed cost matters more here than anywhere: a GPU that looks cheap on a US
 site attracts 5% duty and 5% VAT on a high-value item, which routinely erases
 the gap against local stock.
 
+## Why stores block, and the free things that help
+
+It is not load — a search sends about eight requests, fewer than opening eight
+tabs. It is **identification**. Python's TLS handshake has a different shape
+from Chrome's (cipher order, extensions, ALPN, HTTP/2 settings), and that
+fingerprint — JA3 — identifies the client before a single byte of HTTP is
+sent. No header can fix it, because it happens before headers exist. Noon
+accepting the connection and then never answering is the classic signature.
+
+Two free mitigations, both on by default:
+
+**TLS impersonation.** With `curl_cffi` installed, the handshake is performed
+with Chrome's fingerprint instead. Set `USE_TLS_IMPERSONATION=false` to
+disable. If the package is absent the app runs exactly as before — nothing
+depends on it.
+
+**Skipping stores that refuse.** A CAPTCHA is not a transient fault; the same
+store answers the same way an hour later, and retrying costs the full timeout
+budget each search. A store reporting `blocked` is remembered and skipped for
+24 hours (`SKIP_BLOCKED_HOURS`), then retried automatically.
+
+```bash
+python cli.py --blocked          # what is being skipped, and why
+python cli.py --unblock noon     # try one again right now
+python cli.py --unblock all
+python cli.py "rtx 4070" --stores noon   # naming a store always tries it
+```
+
+What neither can do is answer a CAPTCHA. Impersonation is about not being
+challenged in the first place; once a store has decided to challenge you, only
+a different IP changes the answer.
+
 ## Using a proxy to reach blocked stores
 
 Four stores answer a UAE home connection with a challenge rather than
@@ -408,7 +440,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 269 tests
+python -m pytest -q      # 281 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in
