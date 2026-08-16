@@ -83,7 +83,7 @@ def test_a_configured_store_parses_a_generic_shop_page():
     cheapest = min(offers, key=lambda o: o.price)
     assert cheapest.price == 1949.00
     assert "VENTUS" in cheapest.title
-    assert cheapest.url.startswith("https://www.microless.com/products/")
+    assert cheapest.url.startswith("https://uae.microless.com/products/")
     assert cheapest.store == "microless"
     assert cheapest.currency == "AED"
 
@@ -204,3 +204,18 @@ def test_european_prices_are_read_correctly(price_text, expected_value, expected
     assert match, f"{price_text!r} was not recognised as a price"
     assert parse_price(match.group(0)) == pytest.approx(expected_value)
     assert detect_currency(price_text) == expected_currency
+
+
+def test_the_woocommerce_search_path_is_inside_the_probe_budget():
+    """Only the first MAX_CANDIDATE_URLS patterns are ever tried, so the order
+    of DEFAULT_SEARCH_PATTERNS decides which platforms are reachable at all.
+    WooCommerce powers most independent shops; it sat fourth and was cut."""
+    urls = provider("pcdubai").search_urls("rtx 4070")
+
+    assert any("post_type=product" in u for u in urls), "WooCommerce fell outside the cap"
+    assert any(u.endswith("/search?q=rtx+4070") for u in urls), "Shopify path missing"
+
+
+def test_the_uae_storefront_is_used_for_microless():
+    """www.microless.com is the group site and carries no UAE pricing."""
+    assert build("microless").origin == "https://uae.microless.com"

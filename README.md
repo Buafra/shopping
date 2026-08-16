@@ -48,8 +48,10 @@ number** — never on the sticker price.
 
 **PC-component specialists**, added automatically when the search is for a part
 (see [PC parts](#pc-parts)):
-Microless · Emax · Jumbo *(UAE)* · B&H Photo *(US)* · Overclockers UK ·
-Scan UK · Alternate *(DE)*
+
+- *UAE:* Microless · UAEGAMERS · GCC Gamers · DXB Gamers · PCDubai ·
+  Gear-up.me · Emax · Jumbo
+- *Global:* B&H Photo *(US)* · Overclockers UK · Scan UK · Alternate *(DE)*
 
 ### Adding a store
 
@@ -327,8 +329,8 @@ DISABLED_STORES=sharaf_dg
 ### PC parts
 
 Same search, wider net. General retailers carry a thin and expensive slice of
-this category, so a query recognised as a component pulls in seven specialist
-shops on top of the usual eight stores:
+this category, so a query recognised as a component pulls in twelve specialist
+shops on top of the usual eight stores — twenty in total:
 
 ```bash
 python cli.py "rtx 4070"
@@ -354,10 +356,21 @@ To search them without the category check, name them:
 python cli.py "thermal paste" --stores microless,scan_uk
 ```
 
-These seven are config-only entries and unverified from a UAE connection — the
+These twelve are config-only entries and unverified from a UAE connection — the
 same blocking that affects eBay and AliExpress may apply. `python diagnose.py
 microless` reports what any one of them actually returns, and the fix for a
 store that has moved its search page is a URL in `app/config.py`, not code.
+
+Two known gaps worth picking up:
+
+- **[Pricena](https://ae.pricena.com)** aggregates a large number of UAE
+  retailers. One integration there is worth many store entries, but its rows
+  are other shops' offers, so attributing them to "Pricena" would misreport who
+  you are buying from — it needs a seller-per-row model first.
+- **Official APIs** beat scraping wherever they exist. Amazon's Product
+  Advertising API is free for Associates, and eBay's Browse API allows a
+  generous free tier — both would replace a blocked scraper with a supported
+  feed. eBay is currently blocked here and would benefit most.
 
 Landed cost matters more here than anywhere: a GPU that looks cheap on a US
 site attracts 5% duty and 5% VAT on a high-value item, which routinely erases
@@ -500,7 +513,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 361 tests
+python -m pytest -q      # 363 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in

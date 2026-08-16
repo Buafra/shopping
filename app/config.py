@@ -165,11 +165,47 @@ STORES: dict[str, StoreSpec] = {
     # All of them are config-driven: no parser module, no selectors. If one
     # stops working the fix is a URL in this dict, and `python diagnose.py
     # <key>` says which URL to use.
+    # The UAE storefront is on the `uae.` subdomain, not `www.` — the latter is
+    # the group site and does not carry UAE pricing.
     "microless": StoreSpec(
         key="microless", label="Microless (UAE)", market=Market.LOCAL, country="AE",
+        currency="AED", trust=0.84, default_delivery_days=3, default_shipping=0.0,
+        origin="https://uae.microless.com",
+        search_urls=("https://uae.microless.com/search/?q={q}",),
+        tags=("pc_parts",),
+    ),
+    # Independent UAE component shops. Between them these are where the enthusiast
+    # market actually buys, and they undercut the general retailers on parts
+    # precisely because parts are all they sell. Mostly WooCommerce and Shopify,
+    # both of which the default search patterns already cover.
+    "uaegamers": StoreSpec(
+        key="uaegamers", label="UAEGAMERS", market=Market.LOCAL, country="AE",
+        currency="AED", trust=0.78, default_delivery_days=3, default_shipping=0.0,
+        origin="https://uaegamers.com",
+        tags=("pc_parts",),
+    ),
+    "gcc_gamers": StoreSpec(
+        key="gcc_gamers", label="GCC Gamers", market=Market.LOCAL, country="AE",
         currency="AED", trust=0.80, default_delivery_days=3, default_shipping=0.0,
-        origin="https://www.microless.com",
-        search_urls=("https://www.microless.com/search/?q={q}",),
+        origin="https://gccgamers.com",
+        tags=("pc_parts",),
+    ),
+    "dxb_gamers": StoreSpec(
+        key="dxb_gamers", label="DXB Gamers", market=Market.LOCAL, country="AE",
+        currency="AED", trust=0.76, default_delivery_days=3, default_shipping=0.0,
+        origin="https://dxbgamers.com",
+        tags=("pc_parts",),
+    ),
+    "pcdubai": StoreSpec(
+        key="pcdubai", label="PCDubai", market=Market.LOCAL, country="AE",
+        currency="AED", trust=0.76, default_delivery_days=3, default_shipping=0.0,
+        origin="https://pcdubai.com",
+        tags=("pc_parts",),
+    ),
+    "gear_up": StoreSpec(
+        key="gear_up", label="Gear-up.me", market=Market.LOCAL, country="AE",
+        currency="AED", trust=0.76, default_delivery_days=3, default_shipping=0.0,
+        origin="https://gear-up.me",
         tags=("pc_parts",),
     ),
     "emax": StoreSpec(
@@ -219,14 +255,14 @@ STORES: dict[str, StoreSpec] = {
     ),
 }
 
-# Tried in order for a store that names no search URL of its own. These cover
-# Shopify, Magento, WooCommerce and the plain `?q=` convention between them,
-# which is most of the storefronts in existence.
+# Tried in order for a store that names no search URL of its own, and only the
+# first MAX_CANDIDATE_URLS of them are attempted — so the order is not
+# cosmetic. Shopify and the plain `?q=` convention share one line; WooCommerce
+# powers most independent shops and must stay inside the cap; Magento is third.
 DEFAULT_SEARCH_PATTERNS: tuple[str, ...] = (
-    "{origin}/search?q={q}",
-    "{origin}/catalogsearch/result/?q={q}",
-    "{origin}/search?type=product&q={q}",
-    "{origin}/?s={q}&post_type=product",
+    "{origin}/search?q={q}",                    # Shopify, and most custom builds
+    "{origin}/?s={q}&post_type=product",        # WooCommerce
+    "{origin}/catalogsearch/result/?q={q}",     # Magento
 )
 
 
