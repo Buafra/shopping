@@ -358,3 +358,46 @@ def test_a_part_number_restating_the_model_is_not_a_second_product():
     )
     # A page genuinely selling several cards must still be caught.
     assert lists_multiple_products("rtx 4070", "RTX 3060 3070 4060 4070 GPU Cards")
+
+
+# ---- a reordered title hides the variant suffix ---------------------------
+
+def test_a_variant_suffix_away_from_the_model_is_still_a_variant():
+    """UAEGAMERS listed "MSI GeForce RTX 4070 VENTUS SUPER 2X 12GB OC".
+
+    The suffix check looked at the token straight after the model number, and
+    this store puts its cooler name there — so a 4070 Super entered an "rtx
+    4070" comparison at AED 2,565 and undercut every genuine card in it."""
+    assert relevance("rtx 4070", "MSI GeForce RTX 4070 VENTUS SUPER 2X 12GB OC") == 0.0
+    assert relevance("rtx 4070", "ZOTAC RTX 4070 Trinity Ti White OC") == 0.0
+
+
+def test_a_reordered_title_still_answers_a_query_for_that_variant():
+    """The other direction of the same problem: someone searching for a Super
+    must still find the card whose title separates 4070 from SUPER."""
+    assert relevance("rtx 4070 super", "MSI GeForce RTX 4070 VENTUS SUPER 2X 12GB OC") == 1.0
+
+
+@pytest.mark.parametrize("title", [
+    "Gigabyte GeForce RTX 4070 Gaming OC 12G Graphics Card, 3X WINDFORCE",
+    "Gigabyte GeForce RTX 4070 AERO OC 12G Graphics Card",
+    "MSI VENTUS GeForce RTX 4070 2X E 12G OC NVIDIA 12 GB GDDR6X",
+    "GIGABYTE WINDFORCE GeForce RTX 4070 12GB GDDR6X PCIe 4.0",
+    "Peladn Gaming RTX 4070 12G Graphics Card GDDR6 RGB",
+    "ASUS Dual GeForce RTX 4070 EVO OC Edition 12GB GDDR6X",
+])
+def test_every_genuine_card_from_the_live_runs_survives(title):
+    """Searching the whole title for a suffix risks rejecting real cards, so
+    these are the exact titles the app has actually recommended."""
+    assert relevance("rtx 4070", title) == 1.0
+
+
+def test_weak_suffixes_stay_adjacency_only():
+    """"Pro", "Max" and "Plus" appear in brand names and marketing copy, so
+    matching them anywhere in a title would reject genuine products."""
+    assert relevance("rtx 4070", "ASUS ProArt GeForce RTX 4070 OC Edition") == 1.0
+    # Non-adjacent, so only the "anywhere" rule could reject it — and weak
+    # suffixes are deliberately excluded from that rule.
+    assert relevance("wh-1000xm5", "Sony WH-1000XM5 Wireless Headphones Pro Audio") == 1.0
+    # Adjacent is a different matter: "WH-1000XM5 Max" would be a real variant.
+    assert relevance("wh-1000xm5", "Sony WH-1000XM5 Max Wireless Headphones") == 0.0

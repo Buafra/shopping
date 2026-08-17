@@ -101,7 +101,11 @@ removed:
   4070, and a 4070 Super is neither — different cards at different prices. A
   suffix the query did not ask for (`Ti`, `Super`, `XT`, `Pro`, `Max`) is a
   mismatch, and so is dropping one it did ask for. Factory-overclock marks
-  like `OC` are not variants — that is the same chip.
+  like `OC` are not variants — that is the same chip. Stores reorder titles,
+  so `Ti`, `Super`, `XT` and `XTX` count wherever they appear: UAEGAMERS
+  listed "RTX 4070 VENTUS SUPER 2X", which put the cooler name between the
+  model and its suffix. Weaker suffixes stay adjacency-only, since `Pro` and
+  `Max` turn up in brand names and marketing copy.
 - **Currency is read from the page, never assumed.** AliExpress localises by
   IP and quotes a UAE visitor in AED on a store the registry calls USD;
   assuming the store default multiplied every price by 3.67.
@@ -524,7 +528,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 395 tests
+python -m pytest -q      # 404 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in

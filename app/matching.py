@@ -110,6 +110,17 @@ VARIANT_SUFFIXES = {
     "lite", "se", "fe",
 }
 
+# Suffixes that name a different piece of silicon and are almost never used as
+# ordinary adjectives in a listing title. These are checked anywhere in the
+# title, not only next to the model number, because stores reorder titles:
+# UAEGAMERS listed "RTX 4070 VENTUS SUPER 2X", which put the model and its
+# suffix two words apart and let a 4070 Super compete as a 4070.
+#
+# The weaker suffixes above stay adjacency-only on purpose. "Pro", "Max" and
+# "Plus" turn up in brand names and marketing copy, so matching them anywhere
+# would reject genuine cards.
+STRONG_VARIANTS = {"ti", "super", "xt", "xtx"}
+
 
 def variant_mismatch(query: str, title: str) -> bool:
     """True when the title's model carries a variant suffix the query did not
@@ -130,12 +141,22 @@ def variant_mismatch(query: str, title: str) -> bool:
                     return nxt
         return None
 
+    t_set = set(t_tokens)
     asked = suffix_after(q_tokens)
     offered = suffix_after(t_tokens)
+
     if offered and offered not in q_set:
         return True          # "rtx 4070" must not answer with a 4070 Ti
-    if asked and asked != offered:
-        return True          # "rtx 4070 ti" must not answer with a plain 4070
+    # "rtx 4070 ti" must not answer with a plain 4070 — but a store that
+    # reorders its title ("RTX 4070 VENTUS SUPER 2X") still sells the variant
+    # that was asked for, so the suffix counts wherever it appears.
+    if asked and asked != offered and asked not in t_set:
+        return True
+
+    # The reverse of that: the model's neighbour looked innocent because the
+    # suffix was moved further down the title.
+    if wanted_models & t_set and (STRONG_VARIANTS & t_set) - q_set:
+        return True
     return False
 
 
