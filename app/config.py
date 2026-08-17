@@ -323,6 +323,14 @@ class ScoringWeights:
 
 WEIGHTS = ScoringWeights().validate()
 
+# For a shopper who has said what they want: the cheapest one that is not a
+# trap. Price dominates, ratings still break ties and still keep a 5.0 from
+# two reviewers from winning, but a 50% premium can no longer be justified by
+# review count alone. The defaults above stay untouched — this is opt-in.
+CHEAPEST_WEIGHTS = ScoringWeights(
+    price=0.75, rating=0.10, review_volume=0.05, delivery=0.05, trust=0.05,
+).validate()
+
 # Bayesian prior for star ratings: a 5.0 from 2 reviewers should not outrank a
 # 4.6 from 8,000. `PRIOR_COUNT` is how many "average" reviews we blend in.
 RATING_PRIOR_MEAN = _env_float("RATING_PRIOR_MEAN", 4.1)

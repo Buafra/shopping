@@ -141,6 +141,22 @@ Two deliberate judgement calls:
 Weights are environment variables — set `W_PRICE=0.6` if you care about price
 more than the defaults assume.
 
+### When you just want the cheapest
+
+```bash
+python cli.py "rtx 4070" --cheapest
+```
+
+Price goes to 75% of the score; ratings and delivery only break ties. This
+exists because the defaults are built for "which should I buy", and a shopper
+who already knows the product wants a different question answered. On one live
+run the default pick was AED 3,242 with a AED 2,150 listing two rows below it —
+`--cheapest` picks the 2,150.
+
+It does not become "trust anything cheap": a 5.0 from one reviewer still loses
+to a 4.6 from thousands at the same price, and accessories, variants and
+refurbished units are filtered out before scoring either way.
+
 ## Running it
 
 ### macOS / Linux
@@ -528,7 +544,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 404 tests
+python -m pytest -q      # 410 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in

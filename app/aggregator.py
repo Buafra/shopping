@@ -14,7 +14,7 @@ import os
 import time
 
 from . import blocklist, category, fx, matching, pricing, scoring
-from .config import SETTINGS
+from .config import CHEAPEST_WEIGHTS, SETTINGS
 from .models import DroppedListing, Market, Offer, SearchResponse, StoreStatus
 from .providers import Provider, build_all
 
@@ -146,6 +146,7 @@ async def search(
     limit_per_store: int | None = None,
     max_results: int = 40,
     include_used: bool = False,
+    cheapest_first: bool = False,
 ) -> SearchResponse:
     query = (query or "").strip()
     if not query:
@@ -253,7 +254,14 @@ async def search(
             f"accessories or a different model rather than the product searched for."
         )
 
-    ranked = scoring.rank(result.offers)[:max_results]
+    weights = CHEAPEST_WEIGHTS if cheapest_first else None
+    ranked = scoring.rank(result.offers, weights)[:max_results]
+    if cheapest_first:
+        notes.append(
+            "Ranking on price (--cheapest): reviews and delivery now only break "
+            "ties. The cheapest listing that is not an accessory, a variant or "
+            "refurbished should win."
+        )
     recommendation = scoring.build_recommendation(ranked)
 
     survivors: dict[str, int] = {}

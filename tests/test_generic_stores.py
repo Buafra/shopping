@@ -437,3 +437,114 @@ def test_visible_prices_still_point_at_the_card_layout():
     p = provider()
     p.last_html = "<html><body><div>AED 2,150.00</div><div>AED 1,999.00</div></body></html>"
     assert "product_path" in p.describe_empty_result()[0]
+
+
+# ---- more than one guess at the product-link pattern ---------------------
+
+def test_a_second_link_pattern_is_tried_when_the_first_reads_nothing():
+    """One guess is not enough. The most common price-adjacent path can be a
+    strip of related products sharing a single price — a real pattern that
+    matches plenty of links and reads no products off any of them, which is
+    what "prices visible, no cards" looked like."""
+    from app.structural import guess_product_paths, parse_cards
+
+    page = """<html><body>
+      <div class="strip"><span>from AED 1,999.00</span>
+        <a href="/c/aa">Card AA</a><a href="/c/bb">Card BB</a><a href="/c/cc">Card CC</a>
+        <a href="/c/dd">Card DD</a><a href="/c/ee">Card EE</a><a href="/c/ff">Card FF</a></div>
+      <div><a href="/p/rtx-4070-a"><img alt="A"></a>
+           <a href="/p/rtx-4070-a"><h3>GIGABYTE RTX 4070 WINDFORCE OC 12G</h3></a>
+           <span>AED 2,149.00</span></div>
+      <div><a href="/p/rtx-4070-b"><img alt="B"></a>
+           <a href="/p/rtx-4070-b"><h3>MSI RTX 4070 VENTUS 2X 12G OC</h3></a>
+           <span>AED 2,249.00</span></div>
+    </body></html>"""
+
+    ranked = guess_product_paths(page)
+    assert ranked[0] == "/c/", "the strip should out-count the products"
+    assert parse_cards(page, origin="https://x.ae", link_match=ranked[0]) == []
+
+    offers = provider()._parse(page, limit=10)
+    assert len(offers) == 2
+    assert {round(o.price) for o in offers} == {2149, 2249}
+
+
+def test_a_configured_product_path_is_not_second_guessed():
+    """An explicit setting is a decision; trying alternatives would silently
+    undo it."""
+    p = provider("bhphoto")
+    assert p.spec.product_path == "/c/product/"
+    assert p._parse(SHOP_PAGE, limit=10) == []   # SHOP_PAGE uses /products/
+
+
+def test_platform_hints_win_ties_over_incidental_segments():
+    from app.structural import guess_product_paths
+
+    assert guess_product_paths(SHOP_PAGE)[0] == "/products/"
+
+
+# ---- ranking on price, when that is what was asked for -------------------
+
+def test_cheapest_weights_change_the_pick():
+    """The live "rtx 4070" run recommended AED 3,242 while a AED 2,150 listing
+    sat two rows below, because rating and review volume are 35% of the default
+    score. --cheapest is for a shopper who has already said what they want.
+
+    These are the exact five offers from that run — the ranking depends on the
+    whole set, so a two-offer stand-in does not reproduce it."""
+    from app import scoring
+    from app.config import CHEAPEST_WEIGHTS
+    from app.models import Market, Offer
+
+    def offer(store, price, rating, reviews, days, market=Market.LOCAL):
+        return Offer(
+            store=store, store_label=store, market=market,
+            country="AE" if market is Market.LOCAL else "US",
+            title=f"{store} RTX 4070", url=f"https://x/{store}/{price}",
+            price=price, currency="AED", price_aed=price, landed_aed=price,
+            rating=rating, review_count=reviews, delivery_days=days,
+        )
+
+    offers = [
+        offer("amazon_ae", 3242, 4.7, 506, 2),
+        offer("amazon_ae", 3200, 4.7, 163, 2),
+        offer("noon", 2150, None, None, 2),
+        offer("newegg", 2142, 5.0, 1, 12, Market.GLOBAL),
+        offer("newegg", 2996, 4.5, 303, 12, Market.GLOBAL),
+    ]
+
+    default = scoring.rank([o.model_copy() for o in offers])
+    assert default[0].landed_aed == 3242, "the run being fixed picked the dearest"
+
+    cheapest = scoring.rank([o.model_copy() for o in offers], CHEAPEST_WEIGHTS)
+    assert cheapest[0].landed_aed <= 2150
+    assert default[0].landed_aed - cheapest[0].landed_aed >= 1000
+
+
+def test_cheapest_weights_are_still_valid_weights():
+    from app.config import CHEAPEST_WEIGHTS
+
+    assert sum(CHEAPEST_WEIGHTS.as_dict().values()) == pytest.approx(1.0)
+    assert CHEAPEST_WEIGHTS.price > 0.5
+
+
+def test_a_five_star_review_from_one_person_still_does_not_win_on_cheapest():
+    """Price dominating must not turn into "trust anything that is cheap"."""
+    from app import scoring
+    from app.config import CHEAPEST_WEIGHTS
+    from app.models import Market, Offer
+
+    def offer(store, price, rating, reviews):
+        return Offer(
+            store=store, store_label=store, market=Market.LOCAL, country="AE",
+            title=f"{store} RTX 4070", url=f"https://x/{store}", price=price,
+            currency="AED", price_aed=price, landed_aed=price, rating=rating,
+            review_count=reviews, delivery_days=2,
+        )
+
+    # Same price: the well-reviewed one must still win.
+    ranked = scoring.rank(
+        [offer("thin", 2000, 5.0, 1), offer("solid", 2000, 4.6, 4000)],
+        CHEAPEST_WEIGHTS,
+    )
+    assert ranked[0].store == "solid"

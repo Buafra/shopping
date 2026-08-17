@@ -23,7 +23,8 @@ from ..browser import render, visible_html
 from ..config import DEFAULT_SEARCH_PATTERNS, STORES, StoreSpec
 from ..models import Offer
 from ..net import FetchError, base_headers, fetch
-from ..structural import PRICE_TEXT, Card, guess_product_path, parse_cards
+from ..structural import (PRICE_TEXT, Card, guess_product_paths,
+                          parse_cards)
 from .base import Provider
 
 log = logging.getLogger(__name__)
@@ -107,17 +108,30 @@ class GenericProvider(Provider):
 
     def _parse(self, html: str, limit: int) -> list[Offer]:
         self.last_html = html
-        link_match = self.spec.product_path or guess_product_path(html)
-        if not link_match:
-            # No repeated price-adjacent link: an empty result page, a bot
-            # wall, or a shell that renders its products in JavaScript. run()
-            # tells those apart; here there is simply nothing to read.
-            return []
 
-        cards = parse_cards(
-            html, origin=self.origin, link_match=link_match, max_cards=limit * 4
+        # No repeated price-adjacent link means an empty result page, a bot
+        # wall, or a shell that renders its products in JavaScript. run() tells
+        # those apart; here there is simply nothing to read.
+        candidates = (
+            [self.spec.product_path] if self.spec.product_path
+            else guess_product_paths(html)
         )
-        return [self._offer(card) for card in cards]
+
+        # Try each pattern until one yields cards. The most common
+        # price-adjacent path can be a locale prefix shared with the
+        # navigation, which matches plenty of links and reads no products off
+        # any of them.
+        for link_match in candidates:
+            cards = parse_cards(
+                html, origin=self.origin, link_match=link_match,
+                max_cards=limit * 4,
+            )
+            if cards:
+                if link_match != candidates[0]:
+                    log.debug("%s: fell back to product path %r",
+                              self.spec.key, link_match)
+                return [self._offer(card) for card in cards]
+        return []
 
     def describe_empty_result(self) -> tuple[str, str]:
         """A config-driven store has one failure mode a coded one does not.

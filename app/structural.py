@@ -248,6 +248,55 @@ PRODUCT_PATH_HINTS = (
 )
 
 
+def guess_product_paths(html: str, *, min_links: int = 2, limit: int = 3) -> list[str]:
+    """Candidate product-URL patterns for this page, best first.
+
+    One guess is not enough. A store whose product links carry a locale prefix
+    ("/en/", "/uae/") shares that segment with its navigation, so the most
+    common segment can be a real pattern that still matches the wrong links —
+    the page then yields visible prices and no readable cards, which is exactly
+    what three stores reported. The caller tries each until one produces cards.
+    """
+    if not html:
+        return []
+
+    tree = HTMLParser(html)
+    hrefs: list[str] = []
+    for link in tree.css("a[href]"):
+        href = link.attributes.get("href") or ""
+        if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
+            continue
+        for ancestor in _ancestors(link, 4):
+            text = node_text(ancestor)
+            if len(text) < 900 and PRICE_TEXT.search(text):
+                hrefs.append(href)
+                break
+
+    if not hrefs:
+        return []
+
+    ranked: list[tuple[int, int, str]] = []
+    for hint in PRODUCT_PATH_HINTS:
+        count = sum(1 for href in hrefs if hint in href)
+        if count >= min_links:
+            # More specific wins ties: "/products/" contains "/product/" only
+            # by accident of spelling.
+            ranked.append((count, len(hint), hint))
+
+    segments: collections.Counter = collections.Counter()
+    for href in hrefs:
+        for segment in urlsplit(href).path.split("/"):
+            if segment and not segment.isdigit() and len(segment) <= 14:
+                segments[f"/{segment}/"] += 1
+    known = {hint for _, _, hint in ranked}
+    for segment, count in segments.most_common():
+        if count >= min_links and segment not in known:
+            ranked.append((count, 0, segment))
+
+    ranked.sort(key=lambda item: (-item[0], -item[1]))
+    return [path for _, _, path in ranked][:limit]
+
+
 def guess_product_path(html: str, *, min_links: int = 2) -> str | None:
     """Work out what this store's product URLs look like, from the page itself.
 

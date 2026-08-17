@@ -193,6 +193,7 @@ async def run_search(query: str, args):
         stores=args.stores.split(",") if args.stores else None,
         limit_per_store=args.limit,
         include_used=args.include_used,
+        cheapest_first=getattr(args, "cheapest", False),
     )
 
 
@@ -306,6 +307,8 @@ async def main() -> int:
     parser.add_argument("--stores", help="comma-separated store keys to limit the search")
     parser.add_argument("--limit", type=int, default=6, help="results per store")
     parser.add_argument("--json", action="store_true", help="emit raw JSON instead of a table")
+    parser.add_argument("--cheapest", action="store_true",
+                        help="rank on price; reviews and delivery only break ties")
     parser.add_argument("--explain", action="store_true",
                         help="list every filtered-out listing and the rule that removed it")
     parser.add_argument("--include-used", action="store_true",
