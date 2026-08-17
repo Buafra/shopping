@@ -301,6 +301,21 @@ def guess_product_path(html: str, *, min_links: int = 2) -> str | None:
     return None
 
 
+def _product_urls(container, link_match: str, origin: str) -> set[str]:
+    """The distinct products a block links to.
+
+    Resolved and query-stripped, so "/p/x", "/p/x?ref=grid" and
+    "https://shop/p/x" count once between them rather than three times.
+    """
+    urls = set()
+    for anchor in container.css(f'a[href*="{link_match}"]'):
+        href = (anchor.attributes.get("href") or "").split("?")[0]
+        resolved = absolutise(href, origin)
+        if resolved:
+            urls.add(resolved.rstrip("/"))
+    return urls
+
+
 def parse_cards(
     html: str,
     *,
@@ -323,16 +338,25 @@ def parse_cards(
     for link in tree.css(f'a[href*="{link_match}"]'):
         href = link.attributes.get("href") or ""
         url = absolutise(href.split("?")[0], origin)
-        if not url or url in seen:
+        # Normalised the same way the container check normalises, or a store
+        # that links one product both with and without a trailing slash yields
+        # it twice — two identical rows competing in the same comparison.
+        if not url or url.rstrip("/") in seen:
             continue
 
         # Walk out from the link until we find the block holding its price.
         #
-        # The block must contain exactly one product link. A wrapper holding
-        # several — a carousel, a grid, a basket summary — has one price that
-        # belongs to none of them in particular, and accepting it would stamp
-        # that price onto every product inside. Wrong prices are worse than
-        # missing ones, so those are skipped.
+        # The block must cover exactly one *product*. A wrapper holding several
+        # — a carousel, a grid, a basket summary — has one price that belongs
+        # to none of them in particular, and accepting it would stamp that
+        # price onto every product inside. Wrong prices are worse than missing
+        # ones, so those are skipped.
+        #
+        # Distinct destinations, not link elements: almost every storefront
+        # links the image and the title separately to the same product page,
+        # and counting anchors rejected every one of those cards. Four stores
+        # rendered perfectly readable prices and returned nothing because of
+        # this.
         container = None
         for ancestor in _ancestors(link, 6):
             text = node_text(ancestor)
@@ -343,7 +367,7 @@ def parse_cards(
             # to the page furniture, and requiring the marker loses them all.
             if not PRICE_TEXT.search(text) and not _price_hook_value(ancestor)[0]:
                 continue
-            if len(ancestor.css(f'a[href*="{link_match}"]')) != 1:
+            if len(_product_urls(ancestor, link_match, origin)) != 1:
                 break
             container = ancestor
             break
@@ -355,7 +379,7 @@ def parse_cards(
         if not price or not title:
             continue
 
-        seen.add(url)
+        seen.add(url.rstrip("/"))
         rating, review_count = _rating_from(container)
         cards.append(
             Card(

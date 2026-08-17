@@ -291,3 +291,51 @@ def test_ordinary_prices_still_parse(text, expected):
     match = PRICE_TEXT.search(text)
     assert match, f"{text!r} no longer recognised"
     assert parse_price(match.group(0)) == pytest.approx(expected)
+
+
+# ---- one product, linked twice -------------------------------------------
+
+def test_a_card_linking_the_same_product_twice_still_parses():
+    """Almost every storefront links the image and the title separately to the
+    same product page. Counting anchors rather than destinations rejected every
+    one of those cards, and four stores rendered perfectly readable prices and
+    returned nothing because of it."""
+    from app.structural import parse_cards
+
+    page = "<html><body>" + "".join(f"""
+      <div class="card">
+        <a href="/products/rtx-4070-{i}"><img alt="RTX 4070 {i}"></a>
+        <a href="/products/rtx-4070-{i}?ref=grid"><h3>GIGABYTE RTX 4070 WINDFORCE OC 12G</h3></a>
+        <span>AED 2,{i}49.00</span>
+      </div>""" for i in range(1, 4)) + "</body></html>"
+
+    cards = parse_cards(page, origin="https://shop.ae", link_match="/products/")
+    assert len(cards) == 3
+    assert {c.price for c in cards} == {2149.0, 2249.0, 2349.0}
+
+
+def test_absolute_and_relative_links_to_one_product_count_once():
+    from app.structural import parse_cards
+
+    page = """<html><body><div class="card">
+        <a href="https://shop.ae/products/x"><img alt="RTX 4070"></a>
+        <a href="/products/x/"><h3>GIGABYTE RTX 4070 WINDFORCE OC 12G</h3></a>
+        <span>AED 2,149.00</span>
+      </div></body></html>"""
+
+    assert len(parse_cards(page, origin="https://shop.ae", link_match="/products/")) == 1
+
+
+def test_a_wrapper_over_different_products_is_still_rejected():
+    """The rule this relaxes exists for a reason: one price shared across a
+    carousel belongs to none of the products in it, and stamping it on all of
+    them is worse than returning nothing."""
+    from app.structural import parse_cards
+
+    page = """<html><body><div class="row"><span>AED 999.00</span>
+        <a href="/products/aaa">Card AAA Graphics</a>
+        <a href="/products/bbb">Card BBB Graphics</a>
+        <a href="/products/ccc">Card CCC Graphics</a>
+      </div></body></html>"""
+
+    assert parse_cards(page, origin="https://shop.ae", link_match="/products/") == []
