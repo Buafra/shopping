@@ -136,6 +136,47 @@ def _fmt(amount: float | None) -> str:
     return f"AED {amount:,.0f}" if amount is not None else "n/a"
 
 
+# Below this, the winner is not "more expensive but better" — it is the same
+# money, and describing it as a trade-off misrepresents the choice.
+NEGLIGIBLE_PREMIUM_AED = 25.0
+NEGLIGIBLE_PREMIUM_PCT = 1.0
+
+
+def _join(items: list[str]) -> str:
+    if len(items) == 1:
+        return items[0]
+    return f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+def _advantages_over(winner: Offer, rival: Offer) -> list[str]:
+    """What the winner genuinely beats the cheapest listing on.
+
+    The old text asserted "wins on reviews, delivery and seller reliability"
+    unconditionally, so an unrated listing was credited with winning on reviews
+    one line above the app saying no rating was published for it.
+    """
+    wins: list[str] = []
+
+    if winner.rating is not None:
+        better_score = rival.rating is None or winner.rating > rival.rating
+        better_volume = (winner.review_count or 0) > (rival.review_count or 0)
+        if better_score or better_volume:
+            wins.append("reviews")
+
+    if (winner.delivery_days or 99) < (rival.delivery_days or 99):
+        wins.append("delivery")
+
+    if winner.market == Market.LOCAL and rival.market != Market.LOCAL:
+        wins.append("buying locally (no customs risk)")
+
+    winner_trust = STORES[winner.store].trust if winner.store in STORES else 0.0
+    rival_trust = STORES[rival.store].trust if rival.store in STORES else 0.0
+    if winner_trust > rival_trust:
+        wins.append("seller reliability")
+
+    return wins
+
+
 def build_recommendation(ranked: list[Offer]) -> Recommendation | None:
     """Explain, in shopper's terms, why the winner won."""
     if not ranked:
@@ -153,19 +194,40 @@ def build_recommendation(ranked: list[Offer]) -> Recommendation | None:
     winner_landed = winner.landed_aed or winner.price
 
     # Price standing
-    if abs(winner_landed - cheapest_landed) < 0.01:
+    cheapest_offer = min(ranked, key=lambda o: o.landed_aed or o.price)
+    premium = winner_landed - cheapest_landed
+    pct = (premium / cheapest_landed * 100) if cheapest_landed else 0
+
+    if abs(premium) < 0.01:
         reasons.append(
             f"It is the cheapest option once shipping and UAE duties are counted "
             f"({_fmt(winner_landed)})."
         )
-    else:
-        premium = winner_landed - cheapest_landed
-        pct = (premium / cheapest_landed * 100) if cheapest_landed else 0
+    elif premium <= NEGLIGIBLE_PREMIUM_AED or pct < NEGLIGIBLE_PREMIUM_PCT:
+        # "AED 8 (0%) more than the cheapest, but wins on..." reads as a
+        # trade-off being made. There is no trade-off at eight dirhams.
         reasons.append(
-            f"At {_fmt(winner_landed)} landed it costs {_fmt(premium)} ({pct:.0f}%) more "
-            f"than the outright cheapest listing, but wins on reviews, delivery and "
-            f"seller reliability."
+            f"At {_fmt(winner_landed)} landed it is within {_fmt(premium)} of the "
+            f"cheapest listing — effectively the same money."
         )
+    else:
+        wins = _advantages_over(winner, cheapest_offer)
+        if wins:
+            reasons.append(
+                f"At {_fmt(winner_landed)} landed it costs {_fmt(premium)} "
+                f"({pct:.0f}%) more than the outright cheapest listing, but wins "
+                f"on {_join(wins)}."
+            )
+        else:
+            # It won on the weighted total without beating the cheapest on any
+            # single count. Claiming an advantage it does not have is worse
+            # than admitting the margin is thin.
+            reasons.append(
+                f"At {_fmt(winner_landed)} landed it costs {_fmt(premium)} "
+                f"({pct:.0f}%) more than the cheapest listing, and does not clearly "
+                f"beat it on reviews or delivery — if price is what matters, take "
+                f"the cheaper one."
+            )
 
     # Reviews
     if winner.rating is not None:

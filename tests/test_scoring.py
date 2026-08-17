@@ -155,3 +155,77 @@ def test_recommendation_flags_when_pick_is_not_cheapest():
 
 def test_recommendation_none_for_empty():
     assert build_recommendation([]) is None
+
+
+# ---- the rationale must not claim advantages the winner does not have ----
+
+def _offer(store, label, price, rating, reviews, days, market=Market.LOCAL):
+    return Offer(
+        store=store, store_label=label, market=market,
+        country="AE" if market is Market.LOCAL else "US",
+        title=f"{label} RTX 4070", url=f"https://x/{store}/{price}",
+        price=price, currency="AED", price_aed=price, landed_aed=price,
+        rating=rating, review_count=reviews, delivery_days=days,
+    )
+
+
+def test_an_unrated_winner_is_never_said_to_win_on_reviews():
+    """A live run produced two contradictory lines one after the other:
+    "wins on reviews, delivery and seller reliability", then "No rating was
+    published for this listing". The first was a fixed string."""
+    from app.scoring import build_recommendation, rank
+    from app.config import CHEAPEST_WEIGHTS
+
+    offers = [
+        _offer("noon", "Noon UAE", 2150, None, None, 2),
+        _offer("newegg", "Newegg", 2142, 5.0, 1, 12, Market.GLOBAL),
+        _offer("amazon_ae", "Amazon.ae", 3200, 4.7, 163, 2),
+    ]
+    rec = build_recommendation(rank(offers, CHEAPEST_WEIGHTS))
+
+    assert rec.offer.rating is None
+    text = " ".join(rec.rationale)
+    assert "wins on reviews" not in text
+    assert "No rating was published" in text
+
+
+def test_a_trivial_premium_is_not_dressed_up_as_a_trade_off():
+    """"AED 8 (0%) more than the cheapest, but wins on…" reads as a decision
+    being made. There is no decision at eight dirhams."""
+    from app.scoring import build_recommendation, rank
+    from app.config import CHEAPEST_WEIGHTS
+
+    offers = [
+        _offer("noon", "Noon UAE", 2150, None, None, 2),
+        _offer("newegg", "Newegg", 2142, 5.0, 1, 12, Market.GLOBAL),
+    ]
+    rec = build_recommendation(rank(offers, CHEAPEST_WEIGHTS))
+    first = rec.rationale[0]
+
+    assert "effectively the same money" in first
+    assert "(0%)" not in first
+
+
+def test_a_real_premium_still_lists_the_genuine_advantages():
+    from app.scoring import build_recommendation, rank
+
+    offers = [
+        _offer("amazon_ae", "Amazon.ae", 3200, 4.7, 163, 2),
+        _offer("newegg", "Newegg", 2142, 5.0, 1, 12, Market.GLOBAL),
+    ]
+    first = build_recommendation(rank(offers)).rationale[0]
+
+    assert "49%" in first
+    assert "wins on" in first
+    assert "delivery" in first          # 2 days against 12 is real
+    assert "reviews" in first           # 163 reviews against 1 is real
+
+
+def test_the_winner_admits_when_it_beats_the_cheapest_on_nothing():
+    """Winning on a weighted total without leading on any single count is
+    possible. Asserting an advantage it does not have is worse than saying so."""
+    from app.scoring import _advantages_over
+
+    winner = _offer("noon", "Noon UAE", 2400, None, None, 5)
+    cheaper = _offer("noon", "Noon UAE", 2100, 4.8, 900, 2)
+    assert _advantages_over(winner, cheaper) == []
