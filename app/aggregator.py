@@ -177,9 +177,15 @@ async def search(
     # Skip stores that refused us recently. Explicitly naming stores overrides
     # this — asking for a store by name is a request to try it regardless.
     skipped: dict[str, str] = {}
+    rested: dict[str, str] = {}
     if not stores and SETTINGS.skip_blocked_hours > 0:
         try:
             skipped = blocklist.blocked(SETTINGS.skip_blocked_hours)
+            # Stores that answer but never with anything readable cost the full
+            # browser budget on every search — two of them alone were adding
+            # twenty seconds to a run they contributed nothing to.
+            rested = blocklist.resting()
+            skipped = {**rested, **skipped}
         except Exception:
             log.warning("could not read the blocked-store list", exc_info=True)
         if skipped:
@@ -209,11 +215,17 @@ async def search(
 
     # Record fresh blocks so the next search does not pay for them again.
     for status in statuses:
-        if status.error_kind in blocklist.BLOCKING_KINDS:
-            try:
+        try:
+            if status.error_kind in blocklist.BLOCKING_KINDS:
                 blocklist.remember(status.store, status.error or "blocked")
-            except Exception:
-                log.warning("could not record block for %s", status.store, exc_info=True)
+            if status.ok:
+                blocklist.record_outcome(status.store, True)
+            elif status.error_kind in blocklist.UNPRODUCTIVE_KINDS:
+                blocklist.record_outcome(
+                    status.store, False, status.error or "no listings"
+                )
+        except Exception:
+            log.warning("could not record outcome for %s", status.store, exc_info=True)
 
     if specialists:
         notes.append(
@@ -221,6 +233,16 @@ async def search(
             + ", ".join(sorted(specialists))
             + ". They stock parts that general retailers do not, and sit out "
             "searches outside that category."
+        )
+
+    if rested:
+        notes.append(
+            f"Resting {len(rested)} store(s) that returned nothing "
+            f"{blocklist.REST_AFTER_FAILURES} runs in a row: "
+            + ", ".join(sorted(rested))
+            + f". They are retried after {blocklist.REST_HOURS:.0f}h — or now, "
+            f"with --stores. This is a guess about them, not their decision, so "
+            f"it is revisited sooner than a block."
         )
 
     if skipped:

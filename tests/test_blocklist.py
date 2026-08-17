@@ -61,3 +61,67 @@ def test_clearing_everything(db):
 
 def test_reading_an_empty_list_is_fine(db):
     assert blocklist.blocked(db_path=db) == {}
+
+
+# ---- stores that answer, but never with anything readable ----------------
+#
+# Jumbo and Microless spent ~23 seconds each on every search, over many runs,
+# and never produced a single listing. A block is the store's decision; this is
+# a guess about the store, so it rests for less time and clears on success.
+
+def test_a_store_rests_only_after_a_run_of_empty_results():
+    from app import blocklist
+
+    for _ in range(blocklist.REST_AFTER_FAILURES - 1):
+        blocklist.record_outcome("microless", False, "no cards")
+        assert "microless" not in blocklist.resting()
+
+    blocklist.record_outcome("microless", False, "no cards")
+    resting = blocklist.resting()
+    assert "microless" in resting
+    assert "3 empty runs in a row" in resting["microless"]
+
+
+def test_one_good_run_clears_the_streak():
+    """A store having an off day, or a query with genuinely no matches, must
+    not accumulate towards being rested."""
+    from app import blocklist
+
+    blocklist.record_outcome("emax", False, "no cards")
+    blocklist.record_outcome("emax", False, "no cards")
+    blocklist.record_outcome("emax", True)
+    blocklist.record_outcome("emax", False, "no cards")
+
+    assert "emax" not in blocklist.resting()
+
+
+def test_resting_expires_sooner_than_a_block():
+    from app import blocklist
+
+    assert blocklist.REST_HOURS < 24.0
+
+    for _ in range(blocklist.REST_AFTER_FAILURES):
+        blocklist.record_outcome("jumbo_ae", False, "no cards")
+
+    assert "jumbo_ae" in blocklist.resting()
+    # Long past the rest window, it is tried again.
+    assert "jumbo_ae" not in blocklist.resting(ttl_hours=0)
+
+
+def test_unblocking_a_store_also_clears_its_failure_streak():
+    from app import blocklist
+
+    for _ in range(blocklist.REST_AFTER_FAILURES):
+        blocklist.record_outcome("gear_up", False, "no cards")
+    assert "gear_up" in blocklist.resting()
+
+    blocklist.clear("gear_up")
+    assert "gear_up" not in blocklist.resting()
+
+
+def test_a_refusal_and_an_empty_page_are_counted_separately():
+    from app import blocklist
+
+    assert "blocked" in blocklist.BLOCKING_KINDS
+    assert "blocked" not in blocklist.UNPRODUCTIVE_KINDS
+    assert blocklist.UNPRODUCTIVE_KINDS == {"parse", "no_results"}

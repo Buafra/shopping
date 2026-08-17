@@ -337,6 +337,18 @@ Repeated searching is what triggers most of them: AliExpress answered
 normally for the first few runs and only then began challenging. Space out
 `--recheck all` rather than polling.
 
+A store that *answers* but never with anything readable is a different case,
+and is rested rather than blocked: after three consecutive empty runs it sits
+out for 6 hours. Jumbo and Microless were spending ~23 seconds each on every
+search and contributing nothing. The distinction matters — a block is the
+store's decision, resting is a guess this app is making about the store, so it
+is revisited sooner and cleared the moment the store returns anything.
+
+```bash
+python cli.py --blocked          # both lists, kept separate
+python cli.py --unblock microless
+```
+
 Sharaf DG is the same story. A CAPTCHA is a deliberate "no", and working around it
 is out of scope here — the honest fixes are an official/affiliate feed or a
 commercial scraping proxy via `SCRAPER_PROXY`. Until then, turn it off so it
@@ -544,7 +556,7 @@ which repeated CSS classes look like product cards. Raw HTML is written to
 ## Tests
 
 ```bash
-python -m pytest -q      # 414 tests
+python -m pytest -q      # 419 tests
 ```
 
 The suite never touches the network. Provider parsers run against fixtures in

@@ -226,15 +226,25 @@ def render_blocked() -> None:
     from app.config import SETTINGS
 
     entries = blocklist.blocked(SETTINGS.skip_blocked_hours)
-    if not entries:
+    resting = blocklist.resting()
+    if not entries and not resting:
         out(f"\n{DIM}No stores are currently being skipped.{RESET}\n")
         return
 
-    out(f"\n{BOLD}Stores being skipped{RESET}  "
-        f"{DIM}(retried automatically after {SETTINGS.skip_blocked_hours:.0f}h)"
-        f"{RESET}\n")
-    for store, reason in sorted(entries.items()):
-        out(f"  {RED}{G['cross']}{RESET} {store:<16}{DIM}{reason[:78]}{RESET}")
+    if entries:
+        out(f"\n{BOLD}Refusing us{RESET}  "
+            f"{DIM}(retried automatically after {SETTINGS.skip_blocked_hours:.0f}h)"
+            f"{RESET}\n")
+        for store, reason in sorted(entries.items()):
+            out(f"  {RED}{G['cross']}{RESET} {store:<16}{DIM}{reason[:78]}{RESET}")
+
+    if resting:
+        # Separated deliberately: one is the store's decision, the other is
+        # ours, and only the second is worth trying to fix in this codebase.
+        out(f"\n{BOLD}Resting — answered but unreadable{RESET}  "
+            f"{DIM}(retried after {blocklist.REST_HOURS:.0f}h){RESET}\n")
+        for store, reason in sorted(resting.items()):
+            out(f"  {YELLOW}!{RESET} {store:<16}{DIM}{reason[:78]}{RESET}")
     out(f"\n{DIM}Retry one now: python cli.py --unblock <store>   "
         f"(or --unblock all){RESET}\n")
 
